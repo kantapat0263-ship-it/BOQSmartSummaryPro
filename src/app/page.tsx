@@ -1,3 +1,4 @@
+
 "use client"
 
 import React, { useState } from 'react';
@@ -15,7 +16,9 @@ import {
   FileSpreadsheet,
   HardHat,
   Construction,
-  ChevronRight
+  ChevronRight,
+  TrendingUp,
+  Activity
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -65,10 +68,9 @@ export default function BoqDashboard() {
   const heroImage = PlaceHolderImages.find(img => img.id === 'hero-construction');
 
   const processFile = async (id: string, file: File) => {
-    setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'processing', progress: 50 } : f));
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'processing', progress: 30 } : f));
 
     try {
-      // Simulate API or actual processing logic
       const response = await fetch(`/api/process?name=${encodeURIComponent(file.name)}`, {
         method: 'POST',
         headers: {
@@ -90,6 +92,11 @@ export default function BoqDashboard() {
         result: data 
       } : f));
 
+      toast({
+        title: "ประมวลผลสำเร็จ",
+        description: `ถอดข้อมูลจาก ${file.name} เรียบร้อยแล้ว`,
+      });
+
     } catch (err: any) {
       setFiles(prev => prev.map(f => f.id === id ? { 
         ...f, 
@@ -107,7 +114,7 @@ export default function BoqDashboard() {
 
   const handleFiles = (newFiles: File[]) => {
     const validFiles = newFiles.filter(file => {
-      const isXlsx = file.name.endsWith('.xlsx');
+      const isXlsx = file.name.toLowerCase().endsWith('.xlsx');
       const isUnderLimit = file.size <= 4.5 * 1024 * 1024;
       return isXlsx && isUnderLimit;
     });
@@ -142,7 +149,7 @@ export default function BoqDashboard() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = result.filename;
+    a.download = `analyzed_${result.filename}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -157,44 +164,50 @@ export default function BoqDashboard() {
           {heroImage && (
             <Image 
               src={heroImage.imageUrl} 
-              alt="Construction" 
+              alt="Construction site" 
               fill 
+              priority
               className="object-cover"
-              data-ai-hint={heroImage.imageHint}
+              data-ai-hint="construction site"
             />
           )}
         </div>
-        <div className="max-w-7xl mx-auto px-6 py-20 relative z-10 flex flex-col md:flex-row items-center gap-12">
-          <div className="flex-1 space-y-6 text-center md:text-left">
-            <Badge className="bg-secondary text-white hover:bg-secondary/90 px-4 py-1 rounded-full text-sm font-bold uppercase tracking-wider">
-              Smart Construction Solutions
-            </Badge>
-            <h1 className="text-5xl md:text-6xl font-extrabold font-headline leading-tight">
-              ระบบวิเคราะห์ <br />
-              <span className="text-secondary">งบประมาณ BOQ</span> อัจฉริยะ
+        <div className="max-w-7xl mx-auto px-6 py-24 relative z-10 flex flex-col lg:flex-row items-center gap-16">
+          <div className="flex-1 space-y-8 text-center lg:text-left">
+            <div className="inline-flex items-center gap-2 bg-secondary text-white px-5 py-2 rounded-full text-xs font-bold uppercase tracking-[0.2em] shadow-lg shadow-secondary/20">
+              <Activity className="w-4 h-4" />
+              Smart Construction Dashboard
+            </div>
+            <h1 className="text-5xl md:text-7xl font-black font-headline leading-[1.1] tracking-tight">
+              ยกระดับการวิเคราะห์ <br />
+              <span className="text-secondary italic">งบประมาณ BOQ</span>
             </h1>
-            <p className="text-blue-100 text-xl max-w-xl leading-relaxed">
-              เครื่องมือสำหรับผู้รับเหมามืออาชีพ แกะวัสดุ รวมยอด และสรุปต้นทุนแยกตามหมวดงานด้วยเทคโนโลยี AI
+            <p className="text-blue-100/80 text-xl max-w-xl leading-relaxed font-medium">
+              เทคโนโลยี AI ที่จะช่วยให้การสรุปค่าวัสดุและค่าแรงเป็นเรื่องง่าย แม่นยำ และรวดเร็ว เพื่อการตัดสินใจที่มีประสิทธิภาพ
             </p>
-            <div className="flex flex-wrap justify-center md:justify-start gap-4 pt-4">
-              <div className="flex items-center gap-2 bg-white/10 px-4 py-2 rounded-xl backdrop-blur-sm border border-white/20">
-                <HardHat className="w-5 h-5 text-secondary" />
-                <span className="text-sm font-medium">คุมต้นทุนแม่นยำ</span>
+            <div className="flex flex-wrap justify-center lg:justify-start gap-5 pt-4">
+              <div className="flex items-center gap-3 bg-white/10 px-6 py-3 rounded-2xl backdrop-blur-md border border-white/20 hover:bg-white/20 transition-colors">
+                <div className="p-2 bg-secondary rounded-lg">
+                  <TrendingUp className="w-5 h-5 text-white" />
+                </div>
+                <span className="text-sm font-bold">วิเคราะห์แนวโน้มต้นทุน</span>
               </div>
-              <div className="flex items-center gap-2 bg-white/10 px-4 py-2 rounded-xl backdrop-blur-sm border border-white/20">
-                <Construction className="w-5 h-5 text-secondary" />
-                <span className="text-sm font-medium">ลดงานเอกสาร</span>
+              <div className="flex items-center gap-3 bg-white/10 px-6 py-3 rounded-2xl backdrop-blur-md border border-white/20 hover:bg-white/20 transition-colors">
+                <div className="p-2 bg-primary rounded-lg border border-white/20">
+                  <HardHat className="w-5 h-5 text-white" />
+                </div>
+                <span className="text-sm font-bold">มาตรฐานวิศวกรรม</span>
               </div>
             </div>
           </div>
 
-          <Card className="w-full max-w-md p-8 glass-card border-none shadow-2xl animate-in zoom-in duration-500">
+          <Card className="w-full max-w-lg p-10 glass-card border-none shadow-[0_32px_64px_-16px_rgba(0,0,0,0.3)] animate-in zoom-in duration-700">
             <div
               onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
               onDragLeave={() => setIsDragging(false)}
               onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleFiles(Array.from(e.dataTransfer.files)); }}
-              className={`relative group cursor-pointer transition-all duration-300 rounded-3xl border-2 border-dashed h-64 flex flex-col items-center justify-center p-6 text-center
-                ${isDragging ? 'border-secondary bg-secondary/5' : 'border-primary/20 bg-muted/30 hover:border-secondary/50'}`}
+              className={`relative group cursor-pointer transition-all duration-500 rounded-[2.5rem] border-2 border-dashed h-72 flex flex-col items-center justify-center p-8 text-center
+                ${isDragging ? 'border-secondary bg-secondary/10 scale-95' : 'border-primary/20 bg-muted/40 hover:border-secondary/50 hover:bg-muted/60'}`}
             >
               <input
                 type="file"
@@ -203,126 +216,130 @@ export default function BoqDashboard() {
                 onChange={(e) => e.target.files && handleFiles(Array.from(e.target.files))}
                 className="absolute inset-0 opacity-0 cursor-pointer"
               />
-              <div className={`p-4 rounded-full mb-4 transition-transform duration-300 ${isDragging ? 'bg-secondary text-white scale-110' : 'bg-primary text-white group-hover:scale-110'}`}>
-                <FileUp className="w-8 h-8" />
+              <div className={`p-6 rounded-3xl mb-6 transition-all duration-500 shadow-xl ${isDragging ? 'bg-secondary text-white rotate-12' : 'bg-primary text-white group-hover:-rotate-6'}`}>
+                <FileUp className="w-10 h-10" />
               </div>
-              <h3 className="text-lg font-bold text-primary mb-1">ลากไฟล์ BOQ วางที่นี่</h3>
-              <p className="text-sm text-muted-foreground">รองรับ Excel (.xlsx) สูงสุด 4.5MB</p>
+              <h3 className="text-xl font-black text-primary mb-2">อัปโหลดไฟล์ BOQ ของคุณ</h3>
+              <p className="text-sm text-muted-foreground font-medium">ลากและวางไฟล์ .xlsx หรือคลิกเพื่อเลือกไฟล์ (สูงสุด 4.5MB)</p>
             </div>
           </Card>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-6 -mt-10">
-        <div className="space-y-12">
+      <div className="max-w-7xl mx-auto px-6 -mt-12 relative z-20">
+        <div className="space-y-16">
           {files.length === 0 ? (
-            <div className="bg-white/50 backdrop-blur-sm border border-dashed border-primary/20 rounded-[2.5rem] py-24 text-center space-y-4">
-              <div className="bg-primary/5 w-20 h-20 rounded-full flex items-center justify-center mx-auto">
-                <LayoutDashboard className="w-10 h-10 text-primary/30" />
+            <div className="bg-white/70 backdrop-blur-xl border border-white border-b-primary/5 rounded-[3.5rem] py-32 text-center space-y-6 shadow-2xl">
+              <div className="bg-primary/5 w-24 h-24 rounded-[2rem] flex items-center justify-center mx-auto border border-primary/10 rotate-3">
+                <LayoutDashboard className="w-12 h-12 text-primary/30" />
               </div>
-              <div className="space-y-1">
-                <p className="text-xl font-bold text-primary/40">ยังไม่มีประวัติการวิเคราะห์</p>
-                <p className="text-muted-foreground">อัปโหลดไฟล์ BOQ เพื่อดู Dashboard สรุปงบประมาณ</p>
+              <div className="space-y-2">
+                <p className="text-3xl font-black text-primary/30">เริ่มต้นการวิเคราะห์ใหม่</p>
+                <p className="text-muted-foreground font-medium max-w-sm mx-auto">ยังไม่มีประวัติการประมวลผล กรุณาอัปโหลดไฟล์ Excel เพื่อสร้างรายงานฉบับสมบูรณ์</p>
               </div>
             </div>
           ) : (
-            <div className="space-y-10">
+            <div className="space-y-12">
               {files.map((file) => (
-                <Card key={file.id} className="border-none shadow-xl rounded-[2.5rem] overflow-hidden bg-white/80 backdrop-blur-md">
-                  <div className="p-8 md:p-12 space-y-10">
+                <Card key={file.id} className="border-none shadow-[0_24px_48px_-12px_rgba(0,0,0,0.15)] rounded-[3rem] overflow-hidden bg-white/90 backdrop-blur-md">
+                  <div className="p-8 md:p-14 space-y-12">
                     {/* Header */}
-                    <div className="flex flex-wrap items-center justify-between gap-6 pb-8 border-b border-primary/5">
-                      <div className="flex items-center gap-5">
-                        <div className="p-4 bg-primary text-white rounded-2xl shadow-lg shadow-primary/20">
-                          <FileSpreadsheet className="w-8 h-8" />
+                    <div className="flex flex-wrap items-center justify-between gap-8 pb-10 border-b border-primary/5">
+                      <div className="flex items-center gap-6">
+                        <div className="p-5 bg-primary text-white rounded-[1.75rem] shadow-2xl shadow-primary/30 transform transition-transform hover:scale-110">
+                          <FileSpreadsheet className="w-10 h-10" />
                         </div>
-                        <div>
-                          <h3 className="text-2xl font-bold text-primary leading-none mb-2">
+                        <div className="space-y-2">
+                          <h3 className="text-3xl font-black text-primary tracking-tight">
                             {file.file.name}
                           </h3>
-                          <div className="flex items-center gap-3">
-                            <Badge variant="outline" className="border-primary/20 text-primary/60">
+                          <div className="flex items-center gap-4">
+                            <Badge variant="secondary" className="bg-primary/5 text-primary hover:bg-primary/10 border-none font-bold px-3 py-1">
                               {(file.file.size / (1024 * 1024)).toFixed(2)} MB
                             </Badge>
                             {file.status === 'success' ? (
-                              <Badge className="bg-secondary/10 text-secondary border-none font-bold">
-                                วิเคราะห์สำเร็จ
+                              <Badge className="bg-emerald-500 text-white border-none font-bold px-3 py-1 animate-in zoom-in">
+                                วิเคราะห์เรียบร้อย
                               </Badge>
                             ) : file.status === 'processing' ? (
-                              <div className="flex items-center gap-2 text-primary font-bold text-sm animate-pulse">
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                                <span>กำลังถอดแบบวัสดุ...</span>
+                              <div className="flex items-center gap-3 text-secondary font-black text-sm">
+                                <Loader2 className="w-5 h-5 animate-spin" />
+                                <span>กำลังถอดแบบและคำนวณ...</span>
                               </div>
                             ) : null}
                           </div>
                         </div>
                       </div>
                       
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-4">
                         {file.status === 'success' && file.result && (
                           <Button 
                             onClick={() => handleDownload(file.result!)}
-                            className="bg-secondary hover:bg-secondary/90 text-white rounded-2xl px-8 h-14 text-lg font-bold shadow-lg shadow-secondary/20 transition-all hover:scale-105"
+                            className="bg-secondary hover:bg-secondary/90 text-white rounded-[1.5rem] px-8 h-16 text-lg font-black shadow-xl shadow-secondary/30 transition-all hover:translate-y-[-2px] hover:shadow-2xl"
                           >
-                            <Download className="w-5 h-5 mr-3" />
-                            ดาวน์โหลด Excel
+                            <Download className="w-6 h-6 mr-3" />
+                            รายงานผลวิเคราะห์
                           </Button>
                         )}
                         <Button 
                           variant="ghost" 
                           size="icon" 
                           onClick={() => setFiles(prev => prev.filter(f => f.id !== file.id))} 
-                          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-2xl w-14 h-14"
+                          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-[1.25rem] w-16 h-16 transition-all"
                         >
-                          <Trash2 className="w-6 h-6" />
+                          <Trash2 className="w-7 h-7" />
                         </Button>
                       </div>
                     </div>
 
                     {/* Result Content */}
                     {file.status === 'success' && file.result && (
-                      <div className="space-y-12 animate-in fade-in slide-in-from-bottom-6 duration-700">
+                      <div className="space-y-16 animate-in fade-in slide-in-from-bottom-10 duration-1000">
                         {/* Summary Stats */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
                           {[
-                            { label: 'มูลค่ารวมโครงการ', value: file.result.grand, icon: <Box className="w-6 h-6" />, unit: '฿', color: 'primary' },
-                            { label: 'รายการวัสดุ', value: file.result.items, icon: <Layers className="w-6 h-6" />, unit: 'รายการ', color: 'secondary' },
-                            { label: 'ข้อมูลชีตงาน', value: file.result.sheets, icon: <FileText className="w-6 h-6" />, unit: 'ชีต', color: 'primary' }
+                            { label: 'มูลค่ารวมโครงการ', value: file.result.grand, icon: <Box className="w-8 h-8" />, unit: '฿', color: 'primary' },
+                            { label: 'รายการประเมิน', value: file.result.items, icon: <Layers className="w-8 h-8" />, unit: 'รายการ', color: 'secondary' },
+                            { label: 'ชีตงานที่วิเคราะห์', value: file.result.sheets, icon: <FileText className="w-8 h-8" />, unit: 'ชีต', color: 'primary' }
                           ].map((stat, i) => (
-                            <div key={i} className={`p-8 rounded-[2rem] border border-${stat.color}/10 bg-${stat.color}/5 relative overflow-hidden group hover:shadow-lg transition-all`}>
-                              <div className={`absolute -right-4 -bottom-4 opacity-5 group-hover:scale-110 transition-transform duration-500 text-${stat.color}`}>
+                            <div key={i} className={`p-10 rounded-[2.5rem] border border-${stat.color}/10 bg-${stat.color}/5 relative overflow-hidden group hover:shadow-2xl transition-all duration-500`}>
+                              <div className={`absolute -right-8 -bottom-8 opacity-[0.03] group-hover:opacity-[0.07] group-hover:scale-125 group-hover:rotate-12 transition-all duration-700 text-${stat.color}`}>
                                 {stat.icon}
-                                <Box className="w-32 h-32" />
+                                <Box className="w-48 h-48" />
                               </div>
-                              <p className="text-sm font-bold text-muted-foreground uppercase tracking-widest mb-2 flex items-center gap-2">
-                                <span className={`w-2 h-2 rounded-full bg-${stat.color}`}></span>
+                              <p className="text-xs font-black text-muted-foreground uppercase tracking-[0.2em] mb-4 flex items-center gap-3">
+                                <span className={`w-3 h-3 rounded-full bg-${stat.color} shadow-lg shadow-${stat.color}/50`}></span>
                                 {stat.label}
                               </p>
-                              <div className={`text-4xl font-black text-${stat.color}`}>
-                                {stat.unit === '฿' && '฿ '}
+                              <div className={`text-5xl font-black text-${stat.color} tracking-tighter`}>
+                                {stat.unit === '฿' && <span className="text-2xl mr-1 font-bold">฿</span>}
                                 <AnimatedNumber value={stat.value} />
-                                {stat.unit !== '฿' && <span className="text-lg font-bold ml-2">{stat.unit}</span>}
+                                {stat.unit !== '฿' && <span className="text-xl font-bold ml-2 text-muted-foreground">{stat.unit}</span>}
                               </div>
                             </div>
                           ))}
                         </div>
 
                         {/* AI Section */}
-                        <AiSummaryView 
-                          input={{
-                            grand: file.result.grand,
-                            items: file.result.items,
-                            sheets: file.result.sheets,
-                            summary: file.result.summary
-                          }} 
-                        />
+                        <div className="relative">
+                          <AiSummaryView 
+                            input={{
+                              grand: file.result.grand,
+                              items: file.result.items,
+                              sheets: file.result.sheets,
+                              summary: file.result.summary
+                            }} 
+                          />
+                        </div>
 
                         {/* Charts Section */}
-                        <div className="space-y-6">
-                          <div className="flex items-center gap-3">
-                            <Construction className="w-6 h-6 text-secondary" />
-                            <h4 className="text-2xl font-bold text-primary">การวิเคราะห์ต้นทุนเชิงกราฟ</h4>
+                        <div className="space-y-8">
+                          <div className="flex items-center gap-4">
+                            <div className="p-3 bg-secondary/10 rounded-2xl">
+                              <Construction className="w-7 h-7 text-secondary" />
+                            </div>
+                            <h4 className="text-3xl font-black text-primary tracking-tight">วิเคราะห์สัดส่วนต้นทุน</h4>
                           </div>
                           <BoqCharts data={file.result.summary} />
                         </div>
@@ -333,11 +350,13 @@ export default function BoqDashboard() {
                     )}
 
                     {file.status === 'error' && (
-                      <div className="bg-destructive/5 border border-destructive/20 p-10 rounded-[2rem] flex items-center gap-6">
-                        <AlertCircle className="w-12 h-12 text-destructive" />
+                      <div className="bg-destructive/5 border border-destructive/20 p-12 rounded-[2.5rem] flex items-center gap-8 animate-in slide-in-from-top-4">
+                        <div className="p-6 bg-destructive/10 rounded-3xl">
+                          <AlertCircle className="w-14 h-14 text-destructive" />
+                        </div>
                         <div>
-                          <h4 className="font-black text-2xl text-destructive mb-1">ไม่สามารถประมวลผลได้</h4>
-                          <p className="text-destructive/80 font-medium">{file.errorMessage}</p>
+                          <h4 className="font-black text-3xl text-destructive mb-2 tracking-tight">ไม่สามารถประมวลผลไฟล์ได้</h4>
+                          <p className="text-destructive/70 text-lg font-medium">{file.errorMessage}</p>
                         </div>
                       </div>
                     )}
@@ -350,10 +369,14 @@ export default function BoqDashboard() {
       </div>
 
       {/* Footer */}
-      <footer className="max-w-7xl mx-auto px-6 pt-20 text-center">
-        <div className="bg-primary/5 py-12 rounded-[3rem] border border-primary/10">
-          <p className="text-primary font-bold mb-2">Smart Summary Pro — ระบบวิศวกรรมข้อมูล BOQ</p>
-          <p className="text-muted-foreground text-sm">© {new Date().getFullYear()} บริษัทรับเหมาก่อสร้างยุคใหม่ มุ่งมั่นเพื่อความโปร่งใสและแม่นยำ</p>
+      <footer className="max-w-7xl mx-auto px-6 pt-24 text-center">
+        <div className="bg-primary/5 py-16 rounded-[4rem] border border-primary/5 shadow-inner">
+          <div className="flex items-center justify-center gap-3 mb-4">
+            <HardHat className="w-8 h-8 text-secondary" />
+            <p className="text-2xl font-black text-primary tracking-tight">Smart Summary Pro</p>
+          </div>
+          <p className="text-muted-foreground font-medium mb-2">เทคโนโลยีวิศวกรรมข้อมูลเพื่อการก่อสร้างที่โปร่งใส</p>
+          <p className="text-muted-foreground/50 text-xs font-bold uppercase tracking-widest">© {new Date().getFullYear()} Construction Data Intelligence System</p>
         </div>
       </footer>
     </div>
