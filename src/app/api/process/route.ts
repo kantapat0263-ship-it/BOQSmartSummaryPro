@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
       sheets: dashboard.sheets,
       raw_lines: dashboard.raw_lines,
       summary: dashboard.summary,
+      warnings: dashboard.warnings,
       xlsx_b64,
     });
   } catch (error: unknown) {

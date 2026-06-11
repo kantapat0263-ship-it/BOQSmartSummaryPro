@@ -47,6 +47,7 @@ interface ProcessResult {
   items: number;
   sheets: number;
   summary: BoqSummaryItem[];
+  warnings?: string[];
   xlsx_b64: string;
   error?: string;
 }
@@ -297,6 +298,23 @@ export default function BoqDashboard() {
                     {/* Result Content */}
                     {file.status === 'success' && file.result && (
                       <div className="space-y-16 animate-in fade-in slide-in-from-bottom-10 duration-1000">
+                        {/* Warnings */}
+                        {file.result.warnings && file.result.warnings.length > 0 && (
+                          <div className="bg-amber-50 border border-amber-300 rounded-[2rem] p-8 flex items-start gap-6">
+                            <div className="p-4 bg-amber-100 rounded-2xl shrink-0">
+                              <AlertCircle className="w-8 h-8 text-amber-600" />
+                            </div>
+                            <div className="space-y-2">
+                              <h4 className="font-black text-xl text-amber-800 tracking-tight">โปรดตรวจสอบ</h4>
+                              <ul className="space-y-1.5 text-amber-800/90 font-medium list-disc list-inside">
+                                {file.result.warnings.map((w, i) => (
+                                  <li key={i}>{w}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Summary Stats */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
                           {[

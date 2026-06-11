@@ -1,11 +1,14 @@
 /**
- * boq-processor.ts — TypeScript port of boq_report.py (COST CONTROL)
- * -----------------------------------------------------------------
- * Reads a BOQ (.xlsx) workbook, extracts material/work line-items from every
+ * boq-processor.ts — TypeScript port of boq_report.py (COST CONTROL),
+ * with extra robustness over the original desktop tool:
+ *   - flexible header detection (Thai/English synonyms, shifted columns)
+ *   - warns instead of silently guessing when money columns aren't labelled
+ *   - smarter dedup (unit normalization + rebar canonicalization)
+ *
+ * It reads a BOQ (.xlsx) workbook, extracts material/work line-items from every
  * sub-sheet, collapses duplicate items used across multiple buildings into a
  * single row (tracking how many buildings use each), and splits them by work
- * category. This mirrors the original openpyxl script 1:1 so the web app
- * produces the same numbers as the desktop tool.
+ * category.
  */
 
 import type ExcelJS from 'exceljs';
@@ -96,9 +99,92 @@ export function normKey(name: unknown): string {
   return s;
 }
 
+/**
+ * Normalize หน่วยนับ เพื่อให้ "ตร.ม." = "ตร.ม" = "ตารางเมตร" = "ม.²"
+ * (ของซ้ำที่หน่วยเขียนต่างกันจะได้รวมกันได้)
+ */
+export function normUnit(unit: unknown): string {
+  let s = String(unit).trim().toLowerCase();
+  s = s.replace(/[.\s²]/g, ''); // ตร.ม. -> ตรม , m² -> m2(หลังถอด ² ออก)
+  const map: Record<string, string> = {
+    ตารางเมตร: 'ตรม', ตรม: 'ตรม', ม2: 'ตรม', sqm: 'ตรม', m2: 'ตรม', sqm2: 'ตรม',
+    ลูกบาศก์เมตร: 'ลบม', ลบม: 'ลบม', ม3: 'ลบม', m3: 'ลบม', cum: 'ลบม',
+    ตารางวา: 'ตรว', ตรว: 'ตรว',
+    เมตร: 'ม', ม: 'ม', m: 'ม', เมตรยาว: 'ม',
+    กิโลกรัม: 'กก', กก: 'กก', kg: 'กก',
+    ตัน: 'ตัน', ton: 'ตัน', tonne: 'ตัน',
+    ชุด: 'ชุด', set: 'ชุด',
+    แผ่น: 'แผ่น', ท่อน: 'ท่อน', เส้น: 'เส้น', ต้น: 'ต้น', ตัว: 'ตัว',
+    อัน: 'อัน', ชิ้น: 'ชิ้น', จุด: 'จุด', ลูก: 'ลูก', บาน: 'บาน',
+  };
+  return map[s] ?? s;
+}
+
+/**
+ * Canonicalize ชื่อเหล็กเสริม (rebar) ให้ของเดียวกันที่เขียนต่างกันรวมได้:
+ *   "เหล็กข้ออ้อย dia 12 มม." = "เหล็ก DB12" = "เหล็กข้ออ้อย Ø12"  -> เหล็ก|db|12
+ *   "เหล็กเส้นกลม dia 9 มม."  = "เหล็กกลม RB9"                    -> เหล็ก|rb|9
+ * คืน null ถ้าไม่ใช่เหล็กเสริม (ให้ไปใช้ key ปกติ) — กันรวมผิด
+ */
+function rebarKey(normalized: string): string | null {
+  const s = normalized; // ผ่าน normKey มาแล้ว (lower, dia, ยุบช่องว่าง)
+  let type: string | null = null;
+  if (s.includes('ข้ออ้อย') || s.includes('ข้อ้อย') || /\bdb\s*\d/.test(s) || s.includes('deformed')) {
+    type = 'db';
+  } else if (s.includes('เส้นกลม') || s.includes('เหล็กกลม') || s.includes('กลมผิวเรียบ') || /\brb\s*\d/.test(s) || s.includes('round bar')) {
+    type = 'rb';
+  }
+  if (!type) return null;
+
+  const m =
+    s.match(/dia\s*0*([0-9]+(?:\.[0-9]+)?)/) ||
+    s.match(/\b(?:db|rb)\s*0*([0-9]+(?:\.[0-9]+)?)/) ||
+    s.match(/0*([0-9]+(?:\.[0-9]+)?)\s*(?:มม|มิล|mm)/);
+  if (!m) return null;
+  const size = parseFloat(m[1]);
+
+  // ถ้าระบุชั้นคุณภาพ (SD40 / SR24) ให้แยกไว้ — กันรวมข้ามเกรด
+  const g = s.match(/\b(sd|sr)\s*0*([0-9]+)/);
+  const grade = g ? `|${g[1]}${g[2]}` : '';
+  return `เหล็ก|${type}|${size}${grade}`;
+}
+
 /** ชื่อสำหรับแสดงผล: ตัดขีดนำหน้า + ยุบช่องว่าง (คงตัวพิมพ์เดิม) */
 export function cleanName(desc: unknown): string {
   return String(desc).trim().replace(/^[\s\-–•·]+/, '').replace(/\s+/g, ' ');
+}
+
+/** คีย์สำหรับยุบของซ้ำ (ชื่อ normalize + rebar canonical + หน่วย normalize) */
+export function dedupKey(desc: unknown, unit: unknown): string {
+  const base = normKey(desc);
+  const rk = rebarKey(base);
+  return `${rk ?? base}${normUnit(unit)}`;
+}
+
+// ---------- header detection (ยืดหยุ่นขึ้น) ----------
+const norm = (t: string) => t.replace(/\s+/g, '').toLowerCase();
+
+function isDesc(t: string): boolean {
+  const n = norm(t);
+  return ['รายการ', 'รายละเอียด', 'รายการวัสดุ', 'รายการงาน', 'description', 'desc'].includes(n);
+}
+function isUnit(t: string): boolean {
+  const n = norm(t);
+  return ['หน่วย', 'หน่วยนับ', 'unit'].includes(n);
+}
+function isQty(t: string): boolean {
+  const n = norm(t);
+  return ['จำนวน', 'จำนวนรวม', 'ปริมาณ', 'ปริมาณงาน', 'qty', 'quantity'].includes(n);
+}
+/** คืนบทบาทของคอลัมน์เงิน (mat/lab/grand) จากข้อความหัวตาราง */
+function moneyRole(t: string): 'mat' | 'lab' | 'grand' | null {
+  const s = t;
+  if (s.includes('รวมเป็นเงิน') || s.includes('รวมราคา') || s.includes('ราคารวม') || s.includes('รวมเงิน') || s.includes('รวมค่า') || /^amount$/i.test(s.trim()) || /^total$/i.test(s.trim())) {
+    return 'grand';
+  }
+  if (s.includes('ค่าวัสดุ') || s.includes('ราคาวัสดุ') || norm(s) === 'วัสดุ' || /material/i.test(s)) return 'mat';
+  if (s.includes('ค่าแรง') || s.includes('แรงงาน') || /labou?r/i.test(s)) return 'lab';
+  return null;
 }
 
 export interface HeaderCols {
@@ -109,36 +195,52 @@ export interface HeaderCols {
   lab_total: number;
   grand: number;
   header_row: number;
+  /** true เมื่อหาคอลัมน์เงินจาก label ไม่ครบ ต้องเดาตำแหน่ง (อาจคลาดเคลื่อน) */
+  moneyGuessed: boolean;
 }
 
-/** หาแถวหัวตาราง + ตำแหน่งคอลัมน์ (BOQ มาตรฐาน กปภ.) หรือ null */
+/** หาแถวหัวตาราง + ตำแหน่งคอลัมน์ (ยืดหยุ่น รองรับ BOQ หลายแบบ) หรือ null */
 export function findHeader(ws: ExcelJS.Worksheet): HeaderCols | null {
   const maxRow = Math.min(ws.rowCount, 15);
-  const maxCol = Math.min(ws.columnCount, 15);
+  const maxCol = Math.min(ws.columnCount, 20);
   for (let r = 1; r <= maxRow; r++) {
     const rowtext: Array<[number, string]> = [];
     for (let c = 1; c <= maxCol; c++) {
       const v = cellValue(ws.getCell(r, c));
-      if (v !== null && v !== undefined) rowtext.push([c, String(v).trim()]);
+      if (v !== null && v !== undefined && String(v).trim() !== '') rowtext.push([c, String(v).trim()]);
     }
-    const joined = rowtext.map(([, t]) => t).join(' ');
-    if (joined.includes('ลำดับ') && joined.includes('รายการ') && joined.includes('หน่วย')) {
-      const col: Partial<HeaderCols> = {};
-      for (const [c, t] of rowtext) {
-        if (t === 'รายการ' && col.desc === undefined) col.desc = c;
-        else if (t === 'หน่วย') col.unit = c;
-        else if (t === 'จำนวน') col.qty = c;
-        else if (t.includes('ค่าวัสดุ')) col.mat_total = c + 1;
-        else if (t.includes('ค่าแรง')) col.lab_total = c + 1;
-        else if (t.includes('รวมเป็นเงิน')) col.grand = c;
+
+    const col: Partial<HeaderCols> = {};
+    const found = { mat: false, lab: false, grand: false };
+    for (const [c, t] of rowtext) {
+      if (col.desc === undefined && isDesc(t)) col.desc = c;
+      else if (col.unit === undefined && isUnit(t)) col.unit = c;
+      else if (col.qty === undefined && isQty(t)) col.qty = c;
+      const mr = moneyRole(t);
+      if (mr === 'mat' && !found.mat) {
+        // ถ้า label มีคำว่า "รวม" (เช่น ค่าวัสดุรวม) = คอลัมน์ยอดอยู่ตรงนั้นเลย; ไม่งั้นยอดอยู่ถัดไป 1 ช่อง
+        col.mat_total = t.includes('รวม') ? c : c + 1;
+        found.mat = true;
+      } else if (mr === 'lab' && !found.lab) {
+        col.lab_total = t.includes('รวม') ? c : c + 1;
+        found.lab = true;
+      } else if (mr === 'grand' && !found.grand) {
+        col.grand = c;
+        found.grand = true;
       }
-      if (col.desc !== undefined && col.unit !== undefined && col.qty !== undefined) {
-        col.mat_total ??= 6;
-        col.lab_total ??= 8;
-        col.grand ??= 9;
-        col.header_row = r;
-        return col as HeaderCols;
-      }
+    }
+
+    // แถวนี้เป็นหัวตารางก็ต่อเมื่อระบุ รายการ + หน่วย + จำนวน ได้ครบ
+    if (col.desc !== undefined && col.unit !== undefined && col.qty !== undefined) {
+      const q = col.qty;
+      // คอลัมน์เงินที่หา label ไม่เจอ -> เดาตำแหน่งโดยอิงจากคอลัมน์จำนวน (มาตรฐาน กปภ.)
+      const moneyGuessed = !found.mat || !found.lab || !found.grand;
+      col.mat_total ??= q + 2;
+      col.lab_total ??= q + 4;
+      col.grand ??= q + 5;
+      col.header_row = r;
+      col.moneyGuessed = moneyGuessed;
+      return col as HeaderCols;
     }
   }
   return null;
@@ -165,12 +267,14 @@ export interface ExtractMeta {
   sheets: string[];
   byCat: Map<number, Map<string, Item>>;
   sectionsSeen: Map<number, Set<string>>;
+  warnings: string[];
 }
 
 /** อ่าน 1 ไฟล์ -> โครงสร้างที่ยุบซ้ำแล้ว แยกตามหมวด */
 export function extract(wb: ExcelJS.Workbook, src: string): ExtractMeta {
   const byCat = new Map<number, Map<string, Item>>();
   const sectionsSeen = new Map<number, Set<string>>();
+  const warnings: string[] = [];
   let rawLines = 0;
   const usedSheets: string[] = [];
 
@@ -180,6 +284,12 @@ export function extract(wb: ExcelJS.Workbook, src: string): ExtractMeta {
     const col = findHeader(ws);
     if (!col) return;
     usedSheets.push(title);
+    if (col.moneyGuessed) {
+      warnings.push(
+        `ชีต "${title}": ตรวจไม่พบหัวคอลัมน์เงินชัดเจน (ค่าวัสดุ/ค่าแรง/รวมเป็นเงิน) ` +
+          `จึงใช้ตำแหน่งโดยประมาณ — ตัวเลขในชีตนี้อาจคลาดเคลื่อน ควรตรวจสอบ`,
+      );
+    }
     const sheetTag = title.trim().split(/\s+/)[0] || title;
     let curCat = 99; // ก่อนเจอหมวดแรก -> อื่นๆ
 
@@ -206,7 +316,7 @@ export function extract(wb: ExcelJS.Workbook, src: string): ExtractMeta {
       const lab = num(cellValue(ws.getCell(r, col.lab_total)));
       const tot = num(cellValue(ws.getCell(r, col.grand))) || mat + lab;
       const unitS = String(unit).trim();
-      const key = `${normKey(desc)} ${unitS.toLowerCase()}`;
+      const key = dedupKey(desc, unitS);
       rawLines += 1;
 
       if (!byCat.has(curCat)) byCat.set(curCat, new Map());
@@ -224,7 +334,15 @@ export function extract(wb: ExcelJS.Workbook, src: string): ExtractMeta {
     }
   });
 
-  return { src, raw_lines: rawLines, sheets: usedSheets, byCat, sectionsSeen };
+  // เตือนเมื่อจัดหมวดไม่ได้ (ไม่พบรหัส X.Y.Z) ของตกลง "งานอื่นๆ" ทั้งหมด
+  if (byCat.size === 1 && byCat.has(99) && rawLines > 0) {
+    warnings.push(
+      'ไม่พบรหัสหมวดงาน (รูปแบบ X.Y.Z) ในไฟล์ จึงไม่สามารถแยกหมวดได้ — ' +
+        'รวมทุกรายการไว้ใน "งานอื่นๆ" (ยอดรวมยังถูกต้อง)',
+    );
+  }
+
+  return { src, raw_lines: rawLines, sheets: usedSheets, byCat, sectionsSeen, warnings };
 }
 
 // ---------- report data (totals / global merge) ----------
@@ -299,6 +417,7 @@ export interface DashboardResult {
   sheets: number;
   raw_lines: number;
   summary: SummaryRow[];
+  warnings: string[];
 }
 
 export function toDashboard(data: ReportData): DashboardResult {
@@ -322,5 +441,6 @@ export function toDashboard(data: ReportData): DashboardResult {
     sheets: meta.sheets.length,
     raw_lines: meta.raw_lines,
     summary,
+    warnings: meta.warnings,
   };
 }
