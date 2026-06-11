@@ -149,7 +149,8 @@ export default function BoqDashboard() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `analyzed_${result.filename}`;
+    const base = result.filename.replace(/\.xlsx$/i, '');
+    a.download = `[สรุปวัสดุ] ${base}.xlsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
