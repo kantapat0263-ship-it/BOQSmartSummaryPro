@@ -1,3 +1,16 @@
 {
-  "placeholderImages": []
+  "placeholderImages": [
+    {
+      "id": "hero-construction",
+      "description": "Modern high-rise construction site with crane",
+      "imageUrl": "https://picsum.photos/seed/const-1/1200/400",
+      "imageHint": "construction skyscraper"
+    },
+    {
+      "id": "blueprint-detail",
+      "description": "Detailed architectural blueprints on a wooden table",
+      "imageUrl": "https://picsum.photos/seed/blue-1/600/400",
+      "imageHint": "architectural blueprints"
+    }
+  ]
 }
