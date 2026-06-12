@@ -411,12 +411,27 @@ export interface SummaryRow {
   pct: number;
 }
 
+/** รายการวัสดุระดับ item (สำหรับตารางค้นหา/Pareto/เทียบราคาบนเว็บ) */
+export interface MaterialRow {
+  cat: string;
+  name: string;
+  unit: string;
+  qty: number;
+  mat: number;
+  lab: number;
+  tot: number;
+  unitRate: number; // ราคาต่อหน่วยจริง = tot / qty
+  buildings: number; // ใช้กี่อาคาร
+  buildingList: string;
+}
+
 export interface DashboardResult {
   grand: number;
   items: number;
   sheets: number;
   raw_lines: number;
   summary: SummaryRow[];
+  materials: MaterialRow[];
   warnings: string[];
 }
 
@@ -433,6 +448,28 @@ export function toDashboard(data: ReportData): DashboardResult {
     }))
     .sort((a, b) => b.tot - a.tot);
 
+  // รายการวัสดุระดับ item (หนึ่งแถวต่อ หมวด+รายการ) เรียงตามยอดมากสุด
+  const materials: MaterialRow[] = [];
+  const orders = [...meta.byCat.keys()].sort((a, b) => a - b);
+  for (const order of orders) {
+    const label = CATS[order]?.[0] ?? CATS[99][0];
+    for (const it of meta.byCat.get(order)!.values()) {
+      materials.push({
+        cat: label,
+        name: it.name,
+        unit: it.unit,
+        qty: it.qty,
+        mat: it.mat,
+        lab: it.lab,
+        tot: it.tot,
+        unitRate: it.qty ? it.tot / it.qty : 0,
+        buildings: it.sheets.size,
+        buildingList: [...it.sheets].sort().join(', '),
+      });
+    }
+  }
+  materials.sort((a, b) => b.tot - a.tot);
+
   const items = [...catTotals.values()].reduce((acc, t) => acc + t.count, 0);
 
   return {
@@ -441,6 +478,7 @@ export function toDashboard(data: ReportData): DashboardResult {
     sheets: meta.sheets.length,
     raw_lines: meta.raw_lines,
     summary,
+    materials,
     warnings: meta.warnings,
   };
 }

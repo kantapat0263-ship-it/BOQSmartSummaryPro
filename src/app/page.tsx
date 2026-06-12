@@ -28,6 +28,8 @@ import { Badge } from "@/components/ui/badge";
 import { AnimatedNumber } from "@/components/AnimatedNumber";
 import { BoqCharts } from "@/components/BoqCharts";
 import { BoqSummaryTable } from "@/components/BoqSummaryTable";
+import { TopCostDrivers } from "@/components/TopCostDrivers";
+import { MaterialTable } from "@/components/MaterialTable";
 import { AiSummaryView } from "@/components/AiSummaryView";
 import Image from 'next/image';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
@@ -41,12 +43,26 @@ interface BoqSummaryItem {
   pct: number;
 }
 
+interface BoqMaterialItem {
+  cat: string;
+  name: string;
+  unit: string;
+  qty: number;
+  mat: number;
+  lab: number;
+  tot: number;
+  unitRate: number;
+  buildings: number;
+  buildingList: string;
+}
+
 interface ProcessResult {
   filename: string;
   grand: number;
   items: number;
   sheets: number;
   summary: BoqSummaryItem[];
+  materials?: BoqMaterialItem[];
   warnings?: string[];
   xlsx_b64: string;
   error?: string;
@@ -365,6 +381,16 @@ export default function BoqDashboard() {
 
                         {/* Table Section */}
                         <BoqSummaryTable summary={file.result.summary} grandTotal={file.result.grand} />
+
+                        {/* Phase 1: Top cost drivers (Pareto) */}
+                        {file.result.materials && file.result.materials.length > 0 && (
+                          <TopCostDrivers materials={file.result.materials} grandTotal={file.result.grand} />
+                        )}
+
+                        {/* Phase 1: Material table + reference-price comparison */}
+                        {file.result.materials && file.result.materials.length > 0 && (
+                          <MaterialTable materials={file.result.materials} filename={file.file.name} />
+                        )}
                       </div>
                     )}
 
