@@ -200,7 +200,7 @@ export default function BoqDashboard() {
               <span className="text-secondary italic">งบประมาณ BOQ</span>
             </h1>
             <p className="text-blue-100/80 text-xl max-w-xl leading-relaxed font-medium">
-              เทคโนโลยี AI ที่จะช่วยให้การสรุปค่าวัสดุและค่าแรงเป็นเรื่องง่าย แม่นยำ และรวดเร็ว เพื่อการตัดสินใจที่มีประสิทธิภาพ
+              เครื่องมือสำหรับวิศวกรคุมต้นทุน ช่วยสรุปค่าวัสดุและค่าแรงจาก BOQ ได้ง่าย แม่นยำ และรวดเร็ว เพื่อการตัดสินใจที่มีประสิทธิภาพ
             </p>
             <div className="flex flex-wrap justify-center lg:justify-start gap-5 pt-4">
               <div className="flex items-center gap-3 bg-white/10 px-6 py-3 rounded-2xl backdrop-blur-md border border-white/20 hover:bg-white/20 transition-colors">
@@ -208,12 +208,6 @@ export default function BoqDashboard() {
                   <TrendingUp className="w-5 h-5 text-white" />
                 </div>
                 <span className="text-sm font-bold">วิเคราะห์แนวโน้มต้นทุน</span>
-              </div>
-              <div className="flex items-center gap-3 bg-white/10 px-6 py-3 rounded-2xl backdrop-blur-md border border-white/20 hover:bg-white/20 transition-colors">
-                <div className="p-2 bg-primary rounded-lg border border-white/20">
-                  <HardHat className="w-5 h-5 text-white" />
-                </div>
-                <span className="text-sm font-bold">มาตรฐานวิศวกรรม</span>
               </div>
             </div>
           </div>
