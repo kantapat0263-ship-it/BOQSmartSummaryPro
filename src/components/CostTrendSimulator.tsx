@@ -10,43 +10,57 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 
+interface CatRow { cat: string; tot: number; pct: number; }
 interface CostTrendSimulatorProps {
   grand: number;
+  summary: CatRow[];
 }
 
 const fmt0 = (n: number) => n.toLocaleString('th-TH', { maximumFractionDigits: 0 });
 const fmtSigned = (n: number) => (n > 0 ? '+' : '') + fmt0(n);
 
-export function CostTrendSimulator({ grand }: CostTrendSimulatorProps) {
-  const [rateStr, setRateStr] = useState('5');
+export function CostTrendSimulator({ grand, summary }: CostTrendSimulatorProps) {
+  const [baseStr, setBaseStr] = useState('5');
   const [months, setMonths] = useState(12);
   const [marginStr, setMarginStr] = useState('');
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
 
-  const rate = Math.max(-90, parseFloat(rateStr) || 0); // %/ปี
   const margin = marginStr.trim() === '' ? null : (parseFloat(marginStr) || 0);
+  const cats = useMemo(() => summary.filter((c) => c.tot > 0).sort((a, b) => b.tot - a.tot), [summary]);
 
-  const { series, projected, diff, diffPct, profit } = useMemo(() => {
-    const f = (m: number) => grand * Math.pow(1 + rate / 100, m / 12); // ทบต้นรายเดือน
-    const series = Array.from({ length: months + 1 }, (_, m) => ({ m, cost: Math.round(f(m)) }));
-    const projected = f(months);
+  // อัตราของแต่ละหมวด: ใช้ค่าที่ผู้ใช้ตั้งเอง ถ้าไม่ตั้ง = อัตราพื้นฐาน
+  const inputVal = (cat: string) => overrides[cat] ?? baseStr;
+  const rateOf = (cat: string) => {
+    const v = parseFloat(overrides[cat] ?? baseStr);
+    return isFinite(v) ? v : 0;
+  };
+  const setRate = (cat: string, v: string) => setOverrides((p) => ({ ...p, [cat]: v }));
+
+  const { series, projected, diff, diffPct, blended, profit, atHorizon } = useMemo(() => {
+    const catCost = (c: CatRow, m: number) => c.tot * Math.pow(1 + rateOf(c.cat) / 100, m / 12);
+    const total = (m: number) => cats.reduce((s, c) => s + catCost(c, m), 0);
+
+    const series = Array.from({ length: months + 1 }, (_, m) => ({ m, cost: Math.round(total(m)) }));
+    const projected = total(months);
     const diff = projected - grand;
     const diffPct = grand ? (diff / grand) * 100 : 0;
+    // อัตราเฉลี่ยถ่วงน้ำหนัก (effective blended rate ต่อปี)
+    const blended = grand > 0 && months > 0 ? (Math.pow(projected / grand, 12 / months) - 1) * 100 : 0;
 
-    let profit = null as null | {
-      sell: number; now: number; then: number; lost: number; mNow: number; mThen: number;
-    };
+    const atHorizon = cats.map((c) => ({
+      cat: c.cat, rate: rateOf(c.cat), now: c.tot, future: catCost(c, months),
+    }));
+
+    let profit = null as null | { sell: number; now: number; then: number; lost: number; mNow: number; mThen: number; };
     if (margin !== null) {
-      const sell = grand * (1 + margin / 100); // ราคาขาย (ล็อกไว้แล้ว)
+      const sell = grand * (1 + margin / 100);
       const now = sell - grand;
       const then = sell - projected;
-      profit = {
-        sell, now, then, lost: now - then,
-        mNow: margin,
-        mThen: projected ? (then / projected) * 100 : 0,
-      };
+      profit = { sell, now, then, lost: now - then, mNow: margin, mThen: projected ? (then / projected) * 100 : 0 };
     }
-    return { series, projected, diff, diffPct, profit };
-  }, [grand, rate, months, margin]);
+    return { series, projected, diff, diffPct, blended, profit, atHorizon };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grand, cats, overrides, baseStr, months, margin]);
 
   return (
     <div className="bg-card rounded-2xl border border-border/60 shadow-sm overflow-hidden mt-8">
@@ -56,25 +70,24 @@ export function CostTrendSimulator({ grand }: CostTrendSimulatorProps) {
           จำลองแนวโน้มต้นทุน (Cost Trend Simulator)
         </h3>
         <p className="text-xs text-muted-foreground mt-1">
-          ใส่สมมติฐานราคาวัสดุ/ค่าแรงที่คาดว่าจะขึ้น แล้วดูผลต่อต้นทุนและกำไรในอนาคต
+          ตั้งอัตราราคาขึ้นแยกตามหมวด แล้วระบบถ่วงน้ำหนักตามสัดส่วนต้นทุนจริง → แม่นกว่าใช้อัตราเดียว
         </p>
       </div>
 
-      {/* controls */}
+      {/* base controls */}
       <div className="p-6 grid grid-cols-1 sm:grid-cols-3 gap-4 border-b border-border/60">
         <label className="space-y-1.5 block">
-          <span className="text-sm font-medium">ราคาขึ้นเฉลี่ย (% ต่อปี)</span>
-          <Input type="number" inputMode="decimal" value={rateStr}
-            onChange={(e) => setRateStr(e.target.value)} placeholder="เช่น 5" />
+          <span className="text-sm font-medium">อัตราพื้นฐาน (% ต่อปี)</span>
+          <Input type="number" inputMode="decimal" value={baseStr}
+            onChange={(e) => setBaseStr(e.target.value)} placeholder="เช่น 5" />
+          <span className="text-[11px] text-muted-foreground">ใช้กับหมวดที่ยังไม่ตั้งเอง</span>
         </label>
         <label className="space-y-1.5 block">
           <span className="text-sm font-medium">มองไปข้างหน้า</span>
           <Select value={String(months)} onValueChange={(v) => setMonths(Number(v))}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              {[6, 12, 18, 24, 36].map((m) => (
-                <SelectItem key={m} value={String(m)}>{m} เดือน</SelectItem>
-              ))}
+              {[6, 12, 18, 24, 36].map((m) => (<SelectItem key={m} value={String(m)}>{m} เดือน</SelectItem>))}
             </SelectContent>
           </Select>
         </label>
@@ -83,6 +96,37 @@ export function CostTrendSimulator({ grand }: CostTrendSimulatorProps) {
           <Input type="number" inputMode="decimal" value={marginStr}
             onChange={(e) => setMarginStr(e.target.value)} placeholder="เช่น 10" />
         </label>
+      </div>
+
+      {/* per-category rates */}
+      <div className="px-6 py-4 border-b border-border/60">
+        <p className="text-sm font-semibold mb-2">อัตราราคาขึ้นแยกตามหมวด (% ต่อปี)</p>
+        <div className="overflow-x-auto max-h-64">
+          <table className="w-full text-sm">
+            <thead className="text-xs text-muted-foreground">
+              <tr className="text-left border-b border-border/40">
+                <th className="py-2 pr-2 font-semibold">หมวดงาน</th>
+                <th className="py-2 px-2 font-semibold text-right">ต้นทุนปัจจุบัน</th>
+                <th className="py-2 px-2 font-semibold text-right">% โครงการ</th>
+                <th className="py-2 pl-2 font-semibold text-right">อัตรา %/ปี</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cats.map((c) => (
+                <tr key={c.cat} className="border-b border-border/30">
+                  <td className="py-1.5 pr-2 font-medium">{c.cat.replace('งาน', '')}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums">฿{fmt0(c.tot)}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums text-muted-foreground">{c.pct.toFixed(1)}%</td>
+                  <td className="py-1.5 pl-2 text-right">
+                    <input type="number" inputMode="decimal" value={inputVal(c.cat)}
+                      onChange={(e) => setRate(c.cat, e.target.value)}
+                      className="w-20 text-right rounded-md border border-border/60 bg-white px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-secondary/40 tabular-nums" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* summary cards */}
@@ -94,6 +138,7 @@ export function CostTrendSimulator({ grand }: CostTrendSimulatorProps) {
         <div className="rounded-xl border border-border/60 p-4">
           <p className="text-xs text-muted-foreground font-bold uppercase tracking-wide">คาดการณ์ ณ {months} เดือน</p>
           <p className="text-2xl font-black text-primary mt-1">฿{fmt0(projected)}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">อัตราเฉลี่ยถ่วงน้ำหนัก ≈ {blended.toFixed(1)}%/ปี</p>
         </div>
         <div className={`rounded-xl border p-4 ${diff > 0 ? 'border-red-200 bg-red-50' : diff < 0 ? 'border-emerald-200 bg-emerald-50' : 'border-border/60'}`}>
           <p className="text-xs text-muted-foreground font-bold uppercase tracking-wide">ต้นทุนเพิ่มขึ้น</p>
@@ -135,6 +180,7 @@ export function CostTrendSimulator({ grand }: CostTrendSimulatorProps) {
         </ResponsiveContainer>
       </div>
 
+      {/* transparency */}
       <div className="px-6 pb-6 -mt-2 space-y-3">
         <div className="flex items-start gap-2 text-xs text-muted-foreground">
           <Info className="w-4 h-4 shrink-0 mt-0.5" />
@@ -149,15 +195,38 @@ export function CostTrendSimulator({ grand }: CostTrendSimulatorProps) {
           </summary>
           <div className="px-4 pb-4 pt-1 text-sm space-y-3 text-muted-foreground">
             <div>
-              <p className="font-semibold text-foreground mb-1">1) ต้นทุนในอนาคต (ทบต้น)</p>
+              <p className="font-semibold text-foreground mb-1">1) ต้นทุนอนาคต = รวมรายหมวด (ถ่วงน้ำหนัก)</p>
               <p className="font-mono text-xs bg-background rounded-lg p-2 border border-border/60">
-                ต้นทุนอนาคต = ต้นทุนปัจจุบัน × (1 + อัตราต่อปี)<sup>เดือน ÷ 12</sup>
+                ต้นทุนอนาคต = Σ [ ต้นทุนหมวด × (1 + อัตราหมวด)<sup>เดือน ÷ 12</sup> ]
               </p>
               <p className="text-xs mt-1">
-                แทนค่า: ฿{fmt0(grand)} × (1 + {rate}%)<sup>{months}÷12</sup> = <b className="text-foreground">฿{fmt0(projected)}</b>
-                {' '}(เพิ่มขึ้น {diffPct > 0 ? '+' : ''}{diffPct.toFixed(1)}%)
+                แต่ละหมวดโตด้วยอัตราของตัวเอง แล้วรวมกัน → ได้อัตราเฉลี่ยถ่วงน้ำหนัก ≈ <b className="text-foreground">{blended.toFixed(1)}%/ปี</b>
+                {' '}(ต้นทุนรวม ฿{fmt0(grand)} → <b className="text-foreground">฿{fmt0(projected)}</b>, {diffPct > 0 ? '+' : ''}{diffPct.toFixed(1)}%)
               </p>
-              <p className="text-xs mt-1">ใช้การ <b>ทบต้นรายปี</b> (ราคาขึ้นต่อเนื่อง) แปลงเป็นรายเดือนเพื่อวาดกราฟ</p>
+            </div>
+
+            {/* per-category breakdown */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="text-muted-foreground">
+                  <tr className="text-left border-b border-border/40">
+                    <th className="py-1 pr-2">หมวด</th>
+                    <th className="py-1 px-2 text-right">อัตรา</th>
+                    <th className="py-1 px-2 text-right">ปัจจุบัน</th>
+                    <th className="py-1 pl-2 text-right">ณ {months} ด.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {atHorizon.map((r) => (
+                    <tr key={r.cat} className="border-b border-border/20">
+                      <td className="py-1 pr-2">{r.cat.replace('งาน', '')}</td>
+                      <td className="py-1 px-2 text-right tabular-nums">{r.rate}%</td>
+                      <td className="py-1 px-2 text-right tabular-nums">฿{fmt0(r.now)}</td>
+                      <td className="py-1 pl-2 text-right tabular-nums font-medium text-foreground">฿{fmt0(r.future)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
 
             {profit && (
@@ -168,16 +237,15 @@ export function CostTrendSimulator({ grand }: CostTrendSimulatorProps) {
                   กำไรคงเหลือ = ราคาขาย − ต้นทุนอนาคต = ฿{fmt0(profit.then)}<br />
                   กำไรที่หาย = ต้นทุนที่เพิ่มขึ้น = ฿{fmt0(diff)}
                 </p>
-                <p className="text-xs mt-1">เพราะราคาขายเสนอไปแล้ว (คงที่) ต้นทุนที่เพิ่มทุกบาท = กำไรที่หายไปตรงๆ</p>
               </div>
             )}
 
             <div>
               <p className="font-semibold text-foreground mb-1">ข้อจำกัด & แหล่งอ้างอิง</p>
               <ul className="text-xs list-disc list-inside space-y-0.5">
-                <li>ใช้ <b>อัตราเดียวรวมทุกหมวด</b> ไม่ได้แยกเหล็ก/ปูน/ค่าแรง และไม่รวมปัจจัยอื่น (อัตราแลกเปลี่ยน, ดีมานด์, ฤดูกาล)</li>
-                <li>ตัวเลขแม่นยำเท่ากับ <b>สมมติฐาน %</b> ที่กรอก — ควรอิงข้อมูลจริง</li>
-                <li>แนะนำตั้งค่า % จาก <b>ดัชนีราคาวัสดุก่อสร้าง</b> (สนง.นโยบายและยุทธศาสตร์การค้า กระทรวงพาณิชย์) หรือ <b>ราคากลาง</b> (กรมบัญชีกลาง)</li>
+                <li>คิดเป็น <b>อัตราต่อหมวด</b> (ทบต้นรายปี) ไม่รวมปัจจัยอื่น (อัตราแลกเปลี่ยน, ดีมานด์, ฤดูกาล)</li>
+                <li>แม่นเท่ากับ <b>สมมติฐาน %</b> ที่กรอก — ควรอิงข้อมูลจริง</li>
+                <li>ตั้งค่า % จาก <b>ดัชนีราคาวัสดุก่อสร้าง</b> (กระทรวงพาณิชย์) หรือ <b>ราคากลาง</b> (กรมบัญชีกลาง)</li>
               </ul>
             </div>
           </div>

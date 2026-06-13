@@ -362,7 +362,7 @@ export default function BoqDashboard() {
                         </div>
 
                         {/* Cost trend simulator */}
-                        <CostTrendSimulator grand={file.result.grand} />
+                        <CostTrendSimulator grand={file.result.grand} summary={file.result.summary} />
 
                         {/* Table Section */}
                         <BoqSummaryTable summary={file.result.summary} grandTotal={file.result.grand} />
