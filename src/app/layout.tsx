@@ -1,6 +1,7 @@
 import type {Metadata, Viewport} from 'next';
 import './globals.css';
 import {PwaRegister} from '@/components/PwaRegister';
+import {Toaster} from '@/components/ui/toaster';
 
 export const metadata: Metadata = {
   applicationName: 'PAC Cost Control',
@@ -40,6 +41,7 @@ export default function RootLayout({
       <body className="font-body antialiased bg-background min-h-screen">
         {children}
         <PwaRegister />
+        <Toaster />
       </body>
     </html>
   );

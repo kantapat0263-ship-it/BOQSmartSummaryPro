@@ -27,11 +27,19 @@ export async function currentUser(): Promise<{ id: string; email: string } | nul
   return u ? { id: u.id, email: u.email ?? '' } : null;
 }
 
-/** ส่งลิงก์เข้าสู่ระบบไปทางอีเมล (magic link) */
-export async function signInWithEmail(email: string): Promise<void> {
+/** สมัครสมาชิกด้วยอีเมล + รหัสผ่าน (ถ้าปิด "Confirm email" ใน Supabase จะล็อกอินทันที) */
+export async function signUpPassword(email: string, password: string): Promise<{ needConfirm: boolean }> {
   if (!supabase) throw new Error('ยังไม่ได้ตั้งค่า cloud (Supabase)');
-  const emailRedirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
-  const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo } });
+  const { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) throw error;
+  // ถ้ามี session = ล็อกอินเลย; ถ้าไม่มี = ต้องยืนยันอีเมลก่อน
+  return { needConfirm: !data.session };
+}
+
+/** เข้าสู่ระบบด้วยอีเมล + รหัสผ่าน */
+export async function signInPassword(email: string, password: string): Promise<void> {
+  if (!supabase) throw new Error('ยังไม่ได้ตั้งค่า cloud (Supabase)');
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
 }
 
