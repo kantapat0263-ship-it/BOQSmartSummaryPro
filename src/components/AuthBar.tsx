@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Cloud, LogIn, LogOut, Loader2 } from 'lucide-react';
 import { supabase, supabaseEnabled, signInWithEmail, signOut } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -14,15 +14,21 @@ export function AuthBar({ onAuthChange }: AuthBarProps) {
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
 
+  // เก็บ callback ล่าสุดไว้ใน ref เพื่อให้ subscribe ครั้งเดียว (กัน re-subscribe loop)
+  const onAuthChangeRef = useRef(onAuthChange);
+  onAuthChangeRef.current = onAuthChange;
+
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getSession().then(({ data }) => setEmail(data.session?.user?.email ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       setEmail(session?.user?.email ?? null);
-      onAuthChange?.();
+      // เรียก reload เฉพาะตอนล็อกอิน/ออกจริง ไม่ใช่ตอน INITIAL_SESSION (กันลูป)
+      if (event !== 'INITIAL_SESSION') onAuthChangeRef.current?.();
     });
     return () => sub.subscription.unsubscribe();
-  }, [onAuthChange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!supabaseEnabled) return null; // ยังไม่ตั้งค่า cloud -> ใช้ local เงียบๆ
 
