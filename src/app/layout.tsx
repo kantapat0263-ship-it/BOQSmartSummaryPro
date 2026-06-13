@@ -3,14 +3,14 @@ import './globals.css';
 import {PwaRegister} from '@/components/PwaRegister';
 
 export const metadata: Metadata = {
-  applicationName: 'AC Cost Control',
+  applicationName: 'PAC Cost Control',
   title: 'ระบบสรุปวัสดุ BOQ - Smart Summary Pro',
   description: 'เครื่องมือสรุปค่าวัสดุและค่าแรงจากไฟล์ BOQ อัตโนมัติสำหรับธุรกิจก่อสร้าง',
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'AC Cost',
+    title: 'PAC Cost',
   },
   icons: {
     icon: [

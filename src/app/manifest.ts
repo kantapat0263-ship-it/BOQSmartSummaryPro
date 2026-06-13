@@ -2,8 +2,8 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'AC Cost Control — ระบบสรุปวัสดุ BOQ',
-    short_name: 'AC Cost',
+    name: 'PAC Cost Control — ระบบสรุปวัสดุ BOQ',
+    short_name: 'PAC Cost',
     description:
       'ถอด/รวมวัสดุจาก BOQ แยกหมวด สรุปต้นทุน เทียบราคา และดาวน์โหลดรายงาน Excel สำหรับงานก่อสร้าง',
     start_url: '/',

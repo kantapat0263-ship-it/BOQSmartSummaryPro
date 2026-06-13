@@ -1,5 +1,5 @@
-/* AC Cost Control — service worker (PWA install + light offline) */
-const CACHE = 'ac-cost-v1';
+/* PAC Cost Control — service worker (PWA install + light offline) */
+const CACHE = 'pac-cost-v1';
 const PRECACHE = ['/', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
