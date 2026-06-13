@@ -30,7 +30,6 @@ import { BoqCharts } from "@/components/BoqCharts";
 import { BoqSummaryTable } from "@/components/BoqSummaryTable";
 import { TopCostDrivers } from "@/components/TopCostDrivers";
 import { MaterialTable } from "@/components/MaterialTable";
-import { AiSummaryView } from "@/components/AiSummaryView";
 import Image from 'next/image';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
 
@@ -354,18 +353,6 @@ export default function BoqDashboard() {
                               </div>
                             </div>
                           ))}
-                        </div>
-
-                        {/* AI Section */}
-                        <div className="relative">
-                          <AiSummaryView 
-                            input={{
-                              grand: file.result.grand,
-                              items: file.result.items,
-                              sheets: file.result.sheets,
-                              summary: file.result.summary
-                            }} 
-                          />
                         </div>
 
                         {/* Charts Section */}
