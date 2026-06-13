@@ -30,6 +30,7 @@ import { BoqCharts } from "@/components/BoqCharts";
 import { BoqSummaryTable } from "@/components/BoqSummaryTable";
 import { TopCostDrivers } from "@/components/TopCostDrivers";
 import { MaterialTable } from "@/components/MaterialTable";
+import { CostTrendSimulator } from "@/components/CostTrendSimulator";
 import Image from 'next/image';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
 
@@ -359,6 +360,9 @@ export default function BoqDashboard() {
                           </div>
                           <BoqCharts data={file.result.summary} />
                         </div>
+
+                        {/* Cost trend simulator */}
+                        <CostTrendSimulator grand={file.result.grand} />
 
                         {/* Table Section */}
                         <BoqSummaryTable summary={file.result.summary} grandTotal={file.result.grand} />
