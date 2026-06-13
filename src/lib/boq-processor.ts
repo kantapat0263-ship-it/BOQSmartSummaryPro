@@ -365,6 +365,19 @@ export function extract(wb: ExcelJS.Workbook, src: string, opts: ExtractOptions 
         continue;
       }
 
+      // หัวข้อหมวดแบบ PAC: แถวมีชื่อ ("หมวดงาน.../งาน...") แต่ไม่มีหน่วย -> อัปเดตหมวดปัจจุบัน
+      if (desc && !unit) {
+        const dStr = String(desc).trim();
+        if (dStr.includes('หมวด') || /^งาน/.test(dStr)) {
+          const cat = categorize(dStr);
+          if (cat !== 99) {
+            curCat = cat;
+            if (!sectionsSeen.has(cat)) sectionsSeen.set(cat, new Set());
+            sectionsSeen.get(cat)!.add(dStr.replace(/\s+/g, ' '));
+          }
+        }
+      }
+
       // คัดเฉพาะ "บรรทัดของจริง"
       if (!desc || !unit) continue;
       if (typeof qty !== 'number' || qty === 0) continue;
