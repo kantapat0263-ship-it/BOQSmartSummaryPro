@@ -246,6 +246,41 @@ export function findHeader(ws: ExcelJS.Worksheet): HeaderCols | null {
   return null;
 }
 
+// ---------- self-check: หา "ยอดรวมที่ไฟล์ระบุเอง" ไว้เทียบกับยอดที่คำนวณ ----------
+// คำที่บ่งบอกแถวยอดรวม (โครงการ/หมวด) — ใช้จับ "ยอดอ้างอิงในไฟล์"
+const TOTAL_KEYS = [
+  'รวมราคา', 'รวมทั้งโครงการ', 'รวมทั้งสิ้น', 'รวมเป็นเงินทั้งสิ้น', 'ราคารวมทั้งสิ้น',
+  'รวมราคาทั้งหมด', 'grand total', 'sub total', 'subtotal',
+];
+
+/** สแกนทุกชีต หาแถวที่เป็น "ยอดรวม" แล้วเก็บค่าตัวเลขสูงสุดของแถวนั้น */
+function findStatedTotals(wb: ExcelJS.Workbook): number[] {
+  const out: number[] = [];
+  wb.eachSheet((ws) => {
+    const maxRow = ws.rowCount;
+    const maxCol = Math.min(ws.columnCount, 20);
+    for (let r = 1; r <= maxRow; r++) {
+      let text = '';
+      let maxNum = 0;
+      let hasNum = false;
+      for (let c = 1; c <= maxCol; c++) {
+        const v = cellValue(ws.getCell(r, c));
+        if (v === null || v === undefined) continue;
+        if (typeof v === 'number' && isFinite(v)) {
+          if (Math.abs(v) > Math.abs(maxNum)) maxNum = v;
+          hasNum = true;
+        } else {
+          text += ' ' + String(v);
+        }
+      }
+      if (!hasNum || maxNum <= 0) continue;
+      const low = text.toLowerCase();
+      if (TOTAL_KEYS.some((k) => low.includes(k))) out.push(maxNum);
+    }
+  });
+  return out;
+}
+
 // ---------- core ----------
 export interface Item {
   name: string;
@@ -268,6 +303,7 @@ export interface ExtractMeta {
   byCat: Map<number, Map<string, Item>>;
   sectionsSeen: Map<number, Set<string>>;
   warnings: string[];
+  statedTotals: number[];
 }
 
 /** อ่าน 1 ไฟล์ -> โครงสร้างที่ยุบซ้ำแล้ว แยกตามหมวด */
@@ -342,7 +378,7 @@ export function extract(wb: ExcelJS.Workbook, src: string): ExtractMeta {
     );
   }
 
-  return { src, raw_lines: rawLines, sheets: usedSheets, byCat, sectionsSeen, warnings };
+  return { src, raw_lines: rawLines, sheets: usedSheets, byCat, sectionsSeen, warnings, statedTotals: findStatedTotals(wb) };
 }
 
 // ---------- report data (totals / global merge) ----------
@@ -425,6 +461,14 @@ export interface MaterialRow {
   buildingList: string;
 }
 
+/** ผลการตรวจยอด (เทียบยอดคำนวณ กับ ยอดที่ระบุในไฟล์) */
+export interface VerifyResult {
+  status: 'match' | 'over' | 'under' | 'unknown';
+  statedTotal: number | null; // ยอดอ้างอิงสูงสุดที่พบในไฟล์
+  computed: number;
+  diffPct: number;
+}
+
 export interface DashboardResult {
   grand: number;
   items: number;
@@ -433,6 +477,22 @@ export interface DashboardResult {
   summary: SummaryRow[];
   materials: MaterialRow[];
   warnings: string[];
+  verify: VerifyResult;
+}
+
+function buildVerify(grand: number, stated: number[]): VerifyResult {
+  const maxStated = stated.length ? Math.max(...stated) : null;
+  let status: VerifyResult['status'] = 'unknown';
+  let diffPct = 0;
+  if (maxStated && maxStated > 0) {
+    diffPct = ((grand - maxStated) / maxStated) * 100;
+    const matchedAny = stated.some((v) => Math.abs(grand - v) <= Math.max(v, grand) * 0.02);
+    if (grand > maxStated * 1.05) status = 'over';
+    else if (matchedAny) status = 'match';
+    else if (grand < maxStated * 0.5) status = 'under';
+    else status = 'unknown';
+  }
+  return { status, statedTotal: maxStated, computed: grand, diffPct };
 }
 
 export function toDashboard(data: ReportData): DashboardResult {
@@ -480,5 +540,6 @@ export function toDashboard(data: ReportData): DashboardResult {
     summary,
     materials,
     warnings: meta.warnings,
+    verify: buildVerify(grand, meta.statedTotals),
   };
 }

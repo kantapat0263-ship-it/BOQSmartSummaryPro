@@ -64,6 +64,12 @@ interface ProcessResult {
   summary: BoqSummaryItem[];
   materials?: BoqMaterialItem[];
   warnings?: string[];
+  verify?: {
+    status: 'match' | 'over' | 'under' | 'unknown';
+    statedTotal: number | null;
+    computed: number;
+    diffPct: number;
+  };
   xlsx_b64: string;
   error?: string;
 }
@@ -308,6 +314,34 @@ export default function BoqDashboard() {
                     {/* Result Content */}
                     {file.status === 'success' && file.result && (
                       <div className="space-y-16 animate-in fade-in slide-in-from-bottom-10 duration-1000">
+                        {/* Self-check: ตรวจยอดเทียบกับยอดที่ระบุในไฟล์ */}
+                        {file.result.verify && file.result.verify.status !== 'unknown' && (
+                          file.result.verify.status === 'match' ? (
+                            <div className="bg-emerald-50 border border-emerald-300 rounded-[2rem] p-6 flex items-center gap-4">
+                              <CheckCircle2 className="w-8 h-8 text-emerald-600 shrink-0" />
+                              <p className="text-emerald-800 font-bold">
+                                ตรวจยอดแล้ว: ยอดที่คำนวณ ฿{file.result.verify.computed.toLocaleString('th-TH', { maximumFractionDigits: 0 })} ตรงกับยอดรวมในไฟล์ ✓
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="bg-red-50 border-2 border-red-300 rounded-[2rem] p-6 flex items-start gap-4">
+                              <AlertCircle className="w-8 h-8 text-red-600 shrink-0" />
+                              <div className="text-red-800">
+                                <p className="font-black text-lg mb-1">⚠️ ยอดอาจไม่ถูกต้อง — ควรตรวจสอบก่อนใช้</p>
+                                {file.result.verify.status === 'over' ? (
+                                  <p className="font-medium">
+                                    ยอดที่คำนวณ <b>฿{file.result.verify.computed.toLocaleString('th-TH', { maximumFractionDigits: 0 })}</b> สูงกว่ายอดรวมที่ระบุในไฟล์ (<b>฿{(file.result.verify.statedTotal ?? 0).toLocaleString('th-TH', { maximumFractionDigits: 0 })}</b>) อยู่ {file.result.verify.diffPct.toFixed(0)}% — น่าจะมีการนับซ้ำ (เช่น ชีตสรุป หรือบล็อกสรุปด้านบนถูกนับเข้าไปด้วย)
+                                  </p>
+                                ) : (
+                                  <p className="font-medium">
+                                    ยอดที่คำนวณ <b>฿{file.result.verify.computed.toLocaleString('th-TH', { maximumFractionDigits: 0 })}</b> ต่ำกว่ายอดรวมในไฟล์ (<b>฿{(file.result.verify.statedTotal ?? 0).toLocaleString('th-TH', { maximumFractionDigits: 0 })}</b>) มาก — อาจอ่านรายการไม่ครบ
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        )}
+
                         {/* Warnings */}
                         {file.result.warnings && file.result.warnings.length > 0 && (
                           <div className="bg-amber-50 border border-amber-300 rounded-[2rem] p-8 flex items-start gap-6">

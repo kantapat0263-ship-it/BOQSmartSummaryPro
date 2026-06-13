@@ -55,6 +55,7 @@ export async function POST(req: NextRequest) {
       summary: dashboard.summary,
       materials: dashboard.materials,
       warnings: dashboard.warnings,
+      verify: dashboard.verify,
       xlsx_b64,
     });
   } catch (error: unknown) {
