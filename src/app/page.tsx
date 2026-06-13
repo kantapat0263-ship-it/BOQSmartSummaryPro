@@ -18,7 +18,8 @@ import {
   Construction,
   ChevronRight,
   TrendingUp,
-  Activity
+  Activity,
+  Save
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -31,6 +32,8 @@ import { BoqSummaryTable } from "@/components/BoqSummaryTable";
 import { TopCostDrivers } from "@/components/TopCostDrivers";
 import { MaterialTable } from "@/components/MaterialTable";
 import { CostTrendSimulator } from "@/components/CostTrendSimulator";
+import { SavedProjects } from "@/components/SavedProjects";
+import { saveProject, newId, type SavedProject } from "@/lib/project-store";
 import Image from 'next/image';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
 
@@ -84,7 +87,9 @@ interface ProcessResult {
 
 interface FileState {
   id: string;
-  file: File;
+  fileName: string;
+  fileSize: number;
+  file?: File; // มีเฉพาะไฟล์ที่เพิ่งอัปโหลด (ไว้ส่งประมวลผล)
   status: 'pending' | 'uploading' | 'processing' | 'success' | 'error';
   progress: number;
   result?: ProcessResult;
@@ -95,6 +100,47 @@ export default function BoqDashboard() {
   const [files, setFiles] = useState<FileState[]>([]);
   const { toast } = useToast();
   const [isDragging, setIsDragging] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  // บันทึกโครงการลงเครื่อง (IndexedDB)
+  const handleSave = async (fs: FileState) => {
+    if (!fs.result) return;
+    const def = fs.fileName.replace(/\.xlsx$/i, '');
+    const name = window.prompt('ตั้งชื่อโครงการ', def);
+    if (!name) return;
+    try {
+      await saveProject({
+        id: newId(),
+        name,
+        savedAt: Date.now(),
+        fileName: fs.fileName,
+        fileSize: fs.fileSize,
+        grand: fs.result.grand,
+        result: fs.result,
+      });
+      setReloadKey((k) => k + 1);
+      toast({ title: 'บันทึกโครงการแล้ว', description: `"${name}" เก็บไว้ในเครื่องนี้` });
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: err.message });
+    }
+  };
+
+  // เปิดโครงการที่บันทึกไว้ขึ้นมาแสดง
+  const handleOpenProject = (p: SavedProject) => {
+    setFiles((prev) => {
+      if (prev.some((f) => f.id === p.id)) return prev; // เปิดอยู่แล้ว
+      const loaded: FileState = {
+        id: p.id,
+        fileName: p.fileName,
+        fileSize: p.fileSize,
+        status: 'success',
+        progress: 100,
+        result: p.result as ProcessResult,
+      };
+      return [loaded, ...prev];
+    });
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const heroImage = PlaceHolderImages.find(img => img.id === 'hero-construction');
 
@@ -160,13 +206,15 @@ export default function BoqDashboard() {
 
     const fileStates: FileState[] = validFiles.map(file => ({
       id: Math.random().toString(36).substr(2, 9),
+      fileName: file.name,
+      fileSize: file.size,
       file,
       status: 'pending',
       progress: 0,
     }));
 
     setFiles(prev => [...fileStates, ...prev]);
-    fileStates.forEach(fs => processFile(fs.id, fs.file));
+    fileStates.forEach(fs => processFile(fs.id, fs.file!));
   };
 
   const handleDownload = (result: ProcessResult) => {
@@ -255,6 +303,7 @@ export default function BoqDashboard() {
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-6 -mt-12 relative z-20">
         <div className="space-y-16">
+          <SavedProjects onOpen={handleOpenProject} reloadKey={reloadKey} />
           {files.length === 0 ? (
             <div className="bg-white/70 backdrop-blur-xl border border-white border-b-primary/5 rounded-[3.5rem] py-32 text-center space-y-6 shadow-2xl">
               <div className="bg-primary/5 w-24 h-24 rounded-[2rem] flex items-center justify-center mx-auto border border-primary/10 rotate-3">
@@ -278,11 +327,11 @@ export default function BoqDashboard() {
                         </div>
                         <div className="space-y-2">
                           <h3 className="text-3xl font-black text-primary tracking-tight">
-                            {file.file.name}
+                            {file.fileName}
                           </h3>
                           <div className="flex items-center gap-4">
                             <Badge variant="secondary" className="bg-primary/5 text-primary hover:bg-primary/10 border-none font-bold px-3 py-1">
-                              {(file.file.size / (1024 * 1024)).toFixed(2)} MB
+                              {(file.fileSize / (1024 * 1024)).toFixed(2)} MB
                             </Badge>
                             {file.status === 'success' ? (
                               <Badge className="bg-emerald-500 text-white border-none font-bold px-3 py-1 animate-in zoom-in">
@@ -300,7 +349,17 @@ export default function BoqDashboard() {
                       
                       <div className="flex items-center gap-4">
                         {file.status === 'success' && file.result && (
-                          <Button 
+                          <Button
+                            variant="outline"
+                            onClick={() => handleSave(file)}
+                            className="rounded-[1.5rem] px-6 h-16 text-base font-black border-primary/30 text-primary hover:bg-primary/5 transition-all"
+                          >
+                            <Save className="w-5 h-5 mr-2" />
+                            บันทึกโครงการ
+                          </Button>
+                        )}
+                        {file.status === 'success' && file.result && (
+                          <Button
                             onClick={() => handleDownload(file.result!)}
                             className="bg-secondary hover:bg-secondary/90 text-white rounded-[1.5rem] px-8 h-16 text-lg font-black shadow-xl shadow-secondary/30 transition-all hover:translate-y-[-2px] hover:shadow-2xl"
                           >
@@ -429,7 +488,7 @@ export default function BoqDashboard() {
 
                         {/* Phase 1: Material table + reference-price comparison */}
                         {file.result.materials && file.result.materials.length > 0 && (
-                          <MaterialTable materials={file.result.materials} filename={file.file.name} />
+                          <MaterialTable materials={file.result.materials} filename={file.fileName} />
                         )}
                       </div>
                     )}
