@@ -137,3 +137,9 @@ export async function deleteProject(id: string): Promise<void> {
 export function newId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
+
+/** ตอนนี้กำลังเก็บที่ไหน: 'cloud' (ล็อกอินแล้ว) หรือ 'local' (เครื่องนี้) */
+export async function storageMode(): Promise<'cloud' | 'local'> {
+  const u = await currentUser();
+  return u && supabase ? 'cloud' : 'local';
+}
