@@ -10,8 +10,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { getPriceStats, type PriceStat } from "@/lib/price-bank";
 
 interface MaterialRow {
+  key: string;
   cat: string;
   name: string;
   unit: string;
@@ -42,6 +44,7 @@ export function MaterialTable({ materials, filename }: MaterialTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>('tot');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [refInput, setRefInput] = useState<Record<string, string>>({});
+  const [bank, setBank] = useState<Map<string, PriceStat>>(new Map());
 
   // hydrate reference prices from localStorage (per file)
   useEffect(() => {
@@ -52,6 +55,13 @@ export function MaterialTable({ materials, filename }: MaterialTableProps) {
       setRefInput({});
     }
   }, [storeKey]);
+
+  // ดึงคลังราคากลางบริษัทมาเทียบ (เฉพาะตอนล็อกอิน — ไม่งั้นได้ map ว่าง)
+  useEffect(() => {
+    let alive = true;
+    getPriceStats(materials.map((m) => m.key)).then((m) => { if (alive) setBank(m); }).catch(() => {});
+    return () => { alive = false; };
+  }, [materials]);
 
   const setRef = (k: string, v: string) => {
     setRefInput((prev) => {
@@ -200,6 +210,7 @@ export function MaterialTable({ materials, filename }: MaterialTableProps) {
               <th className="px-3 py-3 text-center">หน่วย</th>
               <th className="px-3 py-3 text-right"><SortBtn k="qty" label="จำนวนรวม" className="justify-end w-full" /></th>
               <th className="px-3 py-3 text-right"><SortBtn k="unitRate" label="ราคา/หน่วย" className="justify-end w-full" /></th>
+              <th className="px-3 py-3 text-right bg-sky-50/60" title="ราคาเฉลี่ยที่บริษัทเคยเห็นจาก BOQ อื่น">คลังราคาบริษัท</th>
               <th className="px-3 py-3 text-right bg-amber-50/60">ราคาอ้างอิง/หน่วย</th>
               <th className="px-3 py-3 text-right bg-amber-50/60"><SortBtn k="variance" label="ส่วนต่างรวม" className="justify-end w-full" /></th>
               <th className="px-3 py-3 text-right"><SortBtn k="tot" label="รวมเป็นเงิน" className="justify-end w-full" /></th>
@@ -214,6 +225,18 @@ export function MaterialTable({ materials, filename }: MaterialTableProps) {
                 <td className="px-3 py-2 text-center text-muted-foreground">{r.unit}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{fmt2(r.qty)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{fmt2(r.unitRate)}</td>
+                {(() => {
+                  const st = bank.get(r.key);
+                  if (!st) return <td className="px-3 py-2 text-right text-muted-foreground/40 bg-sky-50/30">—</td>;
+                  const diffPct = st.avg ? ((r.unitRate - st.avg) / st.avg) * 100 : 0;
+                  const cls = diffPct > 5 ? 'text-red-600' : diffPct < -5 ? 'text-emerald-600' : 'text-muted-foreground';
+                  return (
+                    <td className="px-3 py-2 text-right bg-sky-50/30 tabular-nums">
+                      <div>฿{fmt2(st.avg)} <span className="text-[10px] text-muted-foreground">({st.count})</span></div>
+                      <div className={`text-[11px] font-semibold ${cls}`}>{diffPct > 0 ? '+' : ''}{diffPct.toFixed(0)}%</div>
+                    </td>
+                  );
+                })()}
                 <td className="px-2 py-2 text-right bg-amber-50/40">
                   <input
                     type="number"
@@ -236,7 +259,7 @@ export function MaterialTable({ materials, filename }: MaterialTableProps) {
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">ไม่พบรายการที่ตรงกับการค้นหา</td></tr>
+              <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">ไม่พบรายการที่ตรงกับการค้นหา</td></tr>
             )}
           </tbody>
         </table>

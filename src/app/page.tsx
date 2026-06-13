@@ -35,6 +35,7 @@ import { CostTrendSimulator } from "@/components/CostTrendSimulator";
 import { SavedProjects } from "@/components/SavedProjects";
 import { AuthBar } from "@/components/AuthBar";
 import { saveProject, newId, type SavedProject } from "@/lib/project-store";
+import { recordPrices } from "@/lib/price-bank";
 import Image from 'next/image';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
 
@@ -48,6 +49,7 @@ interface BoqSummaryItem {
 }
 
 interface BoqMaterialItem {
+  key: string;
   cat: string;
   name: string;
   unit: string;
@@ -110,8 +112,9 @@ export default function BoqDashboard() {
     const name = window.prompt('ตั้งชื่อโครงการ', def);
     if (!name) return;
     try {
+      const id = newId();
       await saveProject({
-        id: newId(),
+        id,
         name,
         savedAt: Date.now(),
         fileName: fs.fileName,
@@ -120,7 +123,10 @@ export default function BoqDashboard() {
         result: fs.result,
       });
       setReloadKey((k) => k + 1);
-      toast({ title: 'บันทึกโครงการแล้ว', description: `"${name}" เก็บไว้ในเครื่องนี้` });
+      // เก็บราคาวัสดุลงคลังกลางบริษัท (เฉพาะตอนล็อกอิน — ไม่งั้น no-op)
+      const mats = fs.result.materials ?? [];
+      recordPrices(id, name, mats.map((m) => ({ key: m.key, name: m.name, unit: m.unit, unitRate: m.unitRate }))).catch(() => {});
+      toast({ title: 'บันทึกโครงการแล้ว', description: `"${name}" บันทึกเรียบร้อย` });
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: err.message });
     }

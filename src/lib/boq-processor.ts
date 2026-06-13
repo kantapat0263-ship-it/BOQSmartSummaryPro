@@ -95,7 +95,7 @@ function num(v: unknown): number {
  * - *ไม่* แตะตัวเลข/ขนาด -> dia 16 กับ dia 20 ยังแยกกัน
  */
 export function normKey(name: unknown): string {
-  let s = String(name).trim();
+  let s = String(name).replace(/[\u0000-\u001f]/g, ' ').trim();
   s = s.replace(/^[\s\-–•·.]+/, '');
   s = s.replace(/Ø/g, 'dia').replace(/ø/g, 'dia').replace(/Φ/g, 'dia').replace(/φ/g, 'dia');
   s = s.replace(/\bdia\b\.?/gi, 'dia');
@@ -109,7 +109,7 @@ export function normKey(name: unknown): string {
  * (ของซ้ำที่หน่วยเขียนต่างกันจะได้รวมกันได้)
  */
 export function normUnit(unit: unknown): string {
-  let s = String(unit).trim().toLowerCase();
+  let s = String(unit).replace(/[\u0000-\u001f]/g, '').trim().toLowerCase();
   s = s.replace(/[.\s²]/g, ''); // ตร.ม. -> ตรม , m² -> m2(หลังถอด ² ออก)
   const map: Record<string, string> = {
     ตารางเมตร: 'ตรม', ตรม: 'ตรม', ม2: 'ตรม', sqm: 'ตรม', m2: 'ตรม', sqm2: 'ตรม',
@@ -163,7 +163,7 @@ export function cleanName(desc: unknown): string {
 export function dedupKey(desc: unknown, unit: unknown): string {
   const base = normKey(desc);
   const rk = rebarKey(base);
-  return `${rk ?? base}${normUnit(unit)}`;
+  return `${rk ?? base}|${normUnit(unit)}`;
 }
 
 // ---------- header detection (ยืดหยุ่นขึ้น) ----------
@@ -490,6 +490,7 @@ export interface SummaryRow {
 
 /** รายการวัสดุระดับ item (สำหรับตารางค้นหา/Pareto/เทียบราคาบนเว็บ) */
 export interface MaterialRow {
+  key: string; // คีย์ normalize (ชื่อ+หน่วย) ใช้จับคู่กับคลังราคา
   cat: string;
   name: string;
   unit: string;
@@ -554,8 +555,9 @@ export function toDashboard(data: ReportData): DashboardResult {
   const orders = [...meta.byCat.keys()].sort((a, b) => a - b);
   for (const order of orders) {
     const label = CATS[order]?.[0] ?? CATS[99][0];
-    for (const it of meta.byCat.get(order)!.values()) {
+    for (const [k, it] of meta.byCat.get(order)!) {
       materials.push({
+        key: k,
         cat: label,
         name: it.name,
         unit: it.unit,

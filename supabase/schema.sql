@@ -34,3 +34,37 @@ create policy projects_delete_own on public.projects
   for delete using (auth.uid() = user_id);
 
 -- หมายเหตุ: "แชร์ทั้งทีม" ทำเพิ่มได้ภายหลัง (เพิ่มตาราง teams + แก้ policy ให้ดูตามทีม)
+
+
+-- ====== คลังราคากลางของบริษัท (material_prices) ======
+-- รวมราคาวัสดุจากทุก BOQ ของทุกคน -> อ่านได้ทุกคน (company-wide), เพิ่ม/ลบได้เฉพาะของตัวเอง
+create table if not exists public.material_prices (
+  id           text primary key,
+  source_id    text,            -- โครงการต้นทางของราคา (= project id)
+  mkey         text not null,   -- คีย์จับคู่วัสดุ (ชื่อ+หน่วย normalize)
+  name         text,
+  unit         text,
+  unit_rate    double precision,
+  project_name text,
+  user_id      uuid not null references auth.users (id) on delete cascade,
+  recorded_at  timestamptz not null default now()
+);
+
+create index if not exists material_prices_mkey_idx on public.material_prices (mkey);
+create index if not exists material_prices_source_idx on public.material_prices (source_id);
+
+alter table public.material_prices enable row level security;
+
+-- อ่านได้ทุกคนที่ล็อกอิน (คลังกลางบริษัท)
+drop policy if exists mp_select_all on public.material_prices;
+create policy mp_select_all on public.material_prices
+  for select to authenticated using (true);
+
+-- เพิ่ม/ลบได้เฉพาะแถวของตัวเอง
+drop policy if exists mp_insert_own on public.material_prices;
+create policy mp_insert_own on public.material_prices
+  for insert to authenticated with check (auth.uid() = user_id);
+
+drop policy if exists mp_delete_own on public.material_prices;
+create policy mp_delete_own on public.material_prices
+  for delete to authenticated using (auth.uid() = user_id);
