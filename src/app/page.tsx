@@ -33,6 +33,7 @@ import { TopCostDrivers } from "@/components/TopCostDrivers";
 import { MaterialTable } from "@/components/MaterialTable";
 import { CostTrendSimulator } from "@/components/CostTrendSimulator";
 import { SavedProjects } from "@/components/SavedProjects";
+import { AuthBar } from "@/components/AuthBar";
 import { saveProject, newId, type SavedProject } from "@/lib/project-store";
 import Image from 'next/image';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
@@ -303,6 +304,9 @@ export default function BoqDashboard() {
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-6 -mt-12 relative z-20">
         <div className="space-y-16">
+          <div className="-mb-8">
+            <AuthBar onAuthChange={() => setReloadKey((k) => k + 1)} />
+          </div>
           <SavedProjects onOpen={handleOpenProject} reloadKey={reloadKey} />
           {files.length === 0 ? (
             <div className="bg-white/70 backdrop-blur-xl border border-white border-b-primary/5 rounded-[3.5rem] py-32 text-center space-y-6 shadow-2xl">
