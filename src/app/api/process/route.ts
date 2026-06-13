@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import ExcelJS from 'exceljs';
-import { extract, buildReportData, toDashboard } from '@/lib/boq-processor';
+import { analyze, toDashboard } from '@/lib/boq-processor';
 import { generateReport } from '@/lib/boq-report';
 
 export const runtime = 'nodejs';
@@ -25,10 +25,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // แกะรายการ -> จัดหมวด -> รวมของซ้ำ (ตรรกะเดียวกับ boq_report.py)
-    const meta = extract(workbook, filename);
+    // แกะรายการ -> จัดหมวด -> รวมของซ้ำ + ปรับอัตโนมัติให้ยอดตรงกับที่ไฟล์ประกาศ
+    const { data, reconcile } = analyze(workbook, filename);
 
-    if (meta.byCat.size === 0) {
+    if (data.meta.byCat.size === 0) {
       return NextResponse.json(
         {
           error:
@@ -39,7 +39,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const data = buildReportData(meta);
     const dashboard = toDashboard(data);
 
     // สร้างไฟล์รายงานสรุป (.xlsx) จริง แล้วส่งกลับเป็น base64 ให้ดาวน์โหลด
@@ -56,6 +55,7 @@ export async function POST(req: NextRequest) {
       materials: dashboard.materials,
       warnings: dashboard.warnings,
       verify: dashboard.verify,
+      reconcile,
       xlsx_b64,
     });
   } catch (error: unknown) {

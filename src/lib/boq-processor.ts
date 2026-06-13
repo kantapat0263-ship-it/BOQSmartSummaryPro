@@ -15,8 +15,13 @@ import type ExcelJS from 'exceljs';
 
 // ขึ้นต้นไฟล์ผลลัพธ์ (กันสแกนซ้ำตัวเอง)
 export const OUT_PREFIX = '[สรุปวัสดุ] ';
-// ชีตที่ไม่ใช่ตารางวัสดุ
-const SKIP_SHEET_KEYWORDS = ['สรุป', 'ค่าดำเนินการ', 'cover', 'ปก'];
+// ชีตที่ไม่ใช่ตารางวัสดุ (รวม 'summary' = หน้าสรุปภาษาอังกฤษ)
+const SKIP_SHEET_KEYWORDS = ['สรุป', 'summary', 'ค่าดำเนินการ', 'cover', 'ปก'];
+// หน่วยแบบ "เหมา/เหมารวม" (lump sum) — ใช้ตรวจจับแถวสรุป (rollup) ในโหมด reconcile
+const LUMP_UNITS = new Set(['เหมา', 'เหมารวม', 'เหมาจ่าย', 'lot', 'ls', 'lumpsum']);
+function isLumpUnit(u: unknown): boolean {
+  return LUMP_UNITS.has(String(u).trim().toLowerCase().replace(/[.\s]/g, ''));
+}
 // รหัสหมวดหลัก X.Y.Z (เช่น 5.2.3)
 const SECTION_CODE = /^\d+\.\d+\.\d+/;
 
@@ -306,8 +311,16 @@ export interface ExtractMeta {
   statedTotals: number[];
 }
 
+/** ตัวเลือกการอ่าน (ใช้ตอน Auto-Reconcile) */
+export interface ExtractOptions {
+  /** ข้ามบล็อกสรุปด้านบน: เริ่มนับที่รายการแรกที่มี "หน่วยวัดจริง" (ไม่ใช่เหมา) */
+  dropRecapBlock?: boolean;
+  /** รายชื่อชีตที่ให้ข้าม (เช่น ชีตราคาว่าง/ซ้ำ) */
+  excludeSheets?: Set<string>;
+}
+
 /** อ่าน 1 ไฟล์ -> โครงสร้างที่ยุบซ้ำแล้ว แยกตามหมวด */
-export function extract(wb: ExcelJS.Workbook, src: string): ExtractMeta {
+export function extract(wb: ExcelJS.Workbook, src: string, opts: ExtractOptions = {}): ExtractMeta {
   const byCat = new Map<number, Map<string, Item>>();
   const sectionsSeen = new Map<number, Set<string>>();
   const warnings: string[] = [];
@@ -317,6 +330,7 @@ export function extract(wb: ExcelJS.Workbook, src: string): ExtractMeta {
   wb.eachSheet((ws) => {
     const title = ws.name;
     if (SKIP_SHEET_KEYWORDS.some((k) => title.toLowerCase().includes(k.toLowerCase()))) return;
+    if (opts.excludeSheets?.has(title)) return;
     const col = findHeader(ws);
     if (!col) return;
     usedSheets.push(title);
@@ -328,10 +342,18 @@ export function extract(wb: ExcelJS.Workbook, src: string): ExtractMeta {
     }
     const sheetTag = title.trim().split(/\s+/)[0] || title;
     let curCat = 99; // ก่อนเจอหมวดแรก -> อื่นๆ
+    let started = !opts.dropRecapBlock; // โหมด dropRecap: ยังไม่เริ่มนับจนเจอหน่วยวัดจริง
 
     for (let r = col.header_row + 1; r <= ws.rowCount; r++) {
       const c1 = col.desc > 1 ? cellValue(ws.getCell(r, col.desc - 1)) : cellValue(ws.getCell(r, 1));
-      const desc = cellValue(ws.getCell(r, col.desc));
+      let desc = cellValue(ws.getCell(r, col.desc));
+      // บางฟอร์แมต (เช่น PAC) ใส่ "รหัส" ไว้คอลัมน์ชื่อ แล้วชื่อจริงอยู่คอลัมน์ถัดไป
+      // -> ถ้าช่องชื่อว่าง หรือเป็นรหัสล้วน (เช่น 1.1.1) ให้ดึงชื่อจากคอลัมน์ถัดไป
+      const descStr = desc == null ? '' : String(desc).trim();
+      if ((descStr === '' || /^[\d.]+$/.test(descStr)) && col.desc + 1 !== col.unit && col.desc + 1 !== col.qty) {
+        const next = cellValue(ws.getCell(r, col.desc + 1));
+        if (next != null && String(next).trim() !== '') desc = next;
+      }
       const unit = cellValue(ws.getCell(r, col.unit));
       const qty = cellValue(ws.getCell(r, col.qty));
 
@@ -347,6 +369,12 @@ export function extract(wb: ExcelJS.Workbook, src: string): ExtractMeta {
       if (!desc || !unit) continue;
       if (typeof qty !== 'number' || qty === 0) continue;
       if (String(desc).trim().startsWith('รวม')) continue;
+
+      // โหมด dropRecap: ข้ามบล็อกสรุปด้านบน (แถวหน่วย "เหมา") จนเจอรายการหน่วยวัดจริงตัวแรก
+      if (!started) {
+        if (isLumpUnit(unit)) continue;
+        started = true;
+      }
 
       const mat = num(cellValue(ws.getCell(r, col.mat_total)));
       const lab = num(cellValue(ws.getCell(r, col.lab_total)));
@@ -541,5 +569,108 @@ export function toDashboard(data: ReportData): DashboardResult {
     materials,
     warnings: meta.warnings,
     verify: buildVerify(grand, meta.statedTotals),
+  };
+}
+
+// ---------- Auto-Reconcile: หาวิธีอ่านที่ทำให้ยอดตรงกับที่ไฟล์ประกาศ ----------
+
+/** ผลการปรับอัตโนมัติ */
+export interface ReconcileReport {
+  applied: boolean; // มีการปรับไหม
+  matched: boolean; // ยอดตรงกับไฟล์ไหม (หลังปรับ หรือเดิมก็ตรง)
+  actions: string[]; // ทำอะไรไปบ้าง
+  before: number; // ยอดก่อนปรับ
+  after: number; // ยอดหลังปรับ
+  target: number | null; // ยอดเป้าในไฟล์
+}
+
+/** หาชีตที่มีรายการแต่ยอดรวมเป็น 0 (เช่น ชีตขอราคา/เทมเพลตว่าง) — มักเป็นสำเนาซ้ำ */
+function findZeroTotalSheets(wb: ExcelJS.Workbook): Set<string> {
+  const zero = new Set<string>();
+  wb.eachSheet((ws) => {
+    const title = ws.name;
+    if (SKIP_SHEET_KEYWORDS.some((k) => title.toLowerCase().includes(k.toLowerCase()))) return;
+    const col = findHeader(ws);
+    if (!col) return;
+    let total = 0;
+    let n = 0;
+    for (let r = col.header_row + 1; r <= ws.rowCount; r++) {
+      const desc = cellValue(ws.getCell(r, col.desc));
+      const unit = cellValue(ws.getCell(r, col.unit));
+      const qty = cellValue(ws.getCell(r, col.qty));
+      if (!desc || !unit) continue;
+      if (typeof qty !== 'number' || qty === 0) continue;
+      if (String(desc).trim().startsWith('รวม')) continue;
+      const mat = num(cellValue(ws.getCell(r, col.mat_total)));
+      const lab = num(cellValue(ws.getCell(r, col.lab_total)));
+      total += num(cellValue(ws.getCell(r, col.grand))) || mat + lab;
+      n += 1;
+    }
+    if (n > 0 && Math.abs(total) < 1) zero.add(title);
+  });
+  return zero;
+}
+
+export interface AnalyzeResult {
+  data: ReportData;
+  reconcile: ReconcileReport;
+}
+
+/**
+ * อ่านไฟล์ + ปรับอัตโนมัติให้ยอดตรงกับที่ไฟล์ประกาศ
+ * - ถ้ายอดดิบ "สูงเกิน" ยอดในไฟล์ (น่าจะนับซ้ำ) จะลองตัด (บล็อกสรุป/ชีตราคาว่าง) จนตรง
+ * - ถ้าตรงอยู่แล้ว/ไม่มียอดอ้างอิง → ไม่แตะ
+ */
+export function analyze(wb: ExcelJS.Workbook, src: string): AnalyzeResult {
+  const stated = findStatedTotals(wb);
+  const metaD = extract(wb, src);
+  const dataD = buildReportData(metaD);
+  const verifyD = buildVerify(dataD.grand, stated);
+
+  const base: ReconcileReport = {
+    applied: false,
+    matched: verifyD.status === 'match',
+    actions: [],
+    before: dataD.grand,
+    after: dataD.grand,
+    target: verifyD.statedTotal,
+  };
+
+  // ปรับเฉพาะกรณี "สูงเกิน" (นับซ้ำ) เท่านั้น — กรณีอื่นไม่แตะ (ปลอดภัยกับไฟล์ กปภ.)
+  if (verifyD.status !== 'over') return { data: dataD, reconcile: base };
+
+  const zero = findZeroTotalSheets(wb);
+  const candidates: { opts: ExtractOptions; actions: string[] }[] = [];
+  if (zero.size) {
+    candidates.push({
+      opts: { dropRecapBlock: true, excludeSheets: zero },
+      actions: ['ตัดบล็อกสรุปด้านบนในชีต', `ข้ามชีตราคาว่าง/ซ้ำ (${[...zero].join(', ')})`],
+    });
+  }
+  candidates.push({ opts: { dropRecapBlock: true }, actions: ['ตัดบล็อกสรุปด้านบนในชีต'] });
+  if (zero.size) {
+    candidates.push({
+      opts: { excludeSheets: zero },
+      actions: [`ข้ามชีตราคาว่าง/ซ้ำ (${[...zero].join(', ')})`],
+    });
+  }
+
+  for (const c of candidates) {
+    const m = extract(wb, src, c.opts);
+    const d = buildReportData(m);
+    const v = buildVerify(d.grand, stated);
+    // รับเฉพาะการ "ลดยอด" ที่ทำให้ตรงกับยอดในไฟล์ (ไม่เพิ่มยอด)
+    if (v.status === 'match' && d.grand <= dataD.grand + 1) {
+      return {
+        data: d,
+        reconcile: { applied: true, matched: true, actions: c.actions, before: dataD.grand, after: d.grand, target: v.statedTotal },
+      };
+    }
+  }
+
+  // ปรับไม่สำเร็จ — คงผลเดิมไว้ + แจ้งเตือน
+  return {
+    data: dataD,
+    reconcile: { applied: false, matched: false, actions: ['ปรับอัตโนมัติไม่สำเร็จ — กรุณาตรวจสอบไฟล์'], before: dataD.grand, after: dataD.grand, target: verifyD.statedTotal },
   };
 }

@@ -70,6 +70,14 @@ interface ProcessResult {
     computed: number;
     diffPct: number;
   };
+  reconcile?: {
+    applied: boolean;
+    matched: boolean;
+    actions: string[];
+    before: number;
+    after: number;
+    target: number | null;
+  };
   xlsx_b64: string;
   error?: string;
 }
@@ -314,8 +322,21 @@ export default function BoqDashboard() {
                     {/* Result Content */}
                     {file.status === 'success' && file.result && (
                       <div className="space-y-16 animate-in fade-in slide-in-from-bottom-10 duration-1000">
-                        {/* Self-check: ตรวจยอดเทียบกับยอดที่ระบุในไฟล์ */}
-                        {file.result.verify && file.result.verify.status !== 'unknown' && (
+                        {/* Auto-Reconcile: ปรับให้ยอดตรงกับที่ไฟล์ประกาศ */}
+                        {file.result.reconcile?.applied ? (
+                          <div className="bg-emerald-50 border border-emerald-300 rounded-[2rem] p-6 flex items-start gap-4">
+                            <CheckCircle2 className="w-8 h-8 text-emerald-600 shrink-0" />
+                            <div className="text-emerald-800">
+                              <p className="font-black text-lg mb-1">🔧 ปรับอัตโนมัติให้ยอดตรงกับไฟล์แล้ว</p>
+                              <p className="font-medium">
+                                ยอดจาก ฿{file.result.reconcile.before.toLocaleString('th-TH', { maximumFractionDigits: 0 })} → <b>฿{file.result.reconcile.after.toLocaleString('th-TH', { maximumFractionDigits: 0 })}</b> (ตรงกับยอดในไฟล์ ✓)
+                              </p>
+                              <ul className="text-sm mt-1 list-disc list-inside text-emerald-700">
+                                {file.result.reconcile.actions.map((a, i) => (<li key={i}>{a}</li>))}
+                              </ul>
+                            </div>
+                          </div>
+                        ) : file.result.verify && file.result.verify.status !== 'unknown' && (
                           file.result.verify.status === 'match' ? (
                             <div className="bg-emerald-50 border border-emerald-300 rounded-[2rem] p-6 flex items-center gap-4">
                               <CheckCircle2 className="w-8 h-8 text-emerald-600 shrink-0" />
