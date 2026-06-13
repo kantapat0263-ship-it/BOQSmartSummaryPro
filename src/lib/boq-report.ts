@@ -29,7 +29,7 @@ function hdr(cell: ExcelJS.Cell, text: string, bg = 'FF1F4E78') {
   cell.border = BORDER;
 }
 
-/** เขียนชีตตารางรายการวัสดุ (ใช้ทั้งชีตหมวด และชีตรวมทุกหมวด) */
+/** เขียนชีตตารางรายการวัสดุ (ใช้ทั้งชีตหมวด และชีตรวมทุกหมวด) — ใส่สูตรจริง */
 function writeItemsSheet(ws: ExcelJS.Worksheet, rows: Item[], title: string, subtitle: string) {
   ws.mergeCells('A1:K1');
   ws.getCell('A1').value = title;
@@ -49,39 +49,44 @@ function writeItemsSheet(ws: ExcelJS.Worksheet, rows: Item[], title: string, sub
   let sm = 0;
   let sl = 0;
   let st = 0;
-  let r = hr + 1;
+  const first = hr + 1;
+  let r = first;
+  // คอลัมน์: D=จำนวน F=ค่าวัสดุรวม H=ค่าแรงรวม I=รวมเป็นเงิน
   rows.forEach((it, idx) => {
     const q = it.qty;
-    const vals: Array<string | number> = [
+    const vals: ExcelJS.CellValue[] = [
       idx + 1, it.name, it.unit, q,
-      q ? it.mat / q : 0, it.mat,
-      q ? it.lab / q : 0, it.lab, it.tot,
+      { formula: `IF(D${r}=0,0,F${r}/D${r})`, result: q ? it.mat / q : 0 }, // ค่าวัสดุ/หน่วย
+      it.mat,
+      { formula: `IF(D${r}=0,0,H${r}/D${r})`, result: q ? it.lab / q : 0 }, // ค่าแรง/หน่วย
+      it.lab,
+      { formula: `F${r}+H${r}`, result: it.tot }, // รวมเป็นเงิน = วัสดุ + แรง
       it.sheets.size, [...it.sheets].sort().join(', '),
     ];
     vals.forEach((v, ci) => {
       const c = ci + 1;
       const cell = ws.getCell(r, c);
-      cell.value = v as ExcelJS.CellValue;
+      cell.value = v;
       cell.font = { size: 10, name: FONT };
       cell.border = BORDER;
       if (c === 4 || (c >= 5 && c <= 9)) cell.numFmt = MONEY;
       if (c === 2) cell.alignment = { wrapText: true, vertical: 'top' };
       else if (c === 3 || c === 10) cell.alignment = { horizontal: 'center' };
     });
-    // เน้นรายการที่ใช้ข้ามอาคาร (>=2 อาคาร)
     if (it.sheets.size >= 2) ws.getCell(r, 10).fill = fill('FFFFF2CC');
     sm += it.mat;
     sl += it.lab;
     st += it.tot;
     r += 1;
   });
+  const last = r - 1;
 
-  // subtotal
+  // subtotal — ใช้สูตร =SUM(...)
   ws.getCell(r, 2).value = 'รวมทั้งหมด';
   ws.getCell(r, 2).font = { bold: true, size: 11, name: FONT };
-  for (const [c, v] of [[6, sm], [8, sl], [9, st]] as const) {
+  for (const [c, col, total] of [[6, 'F', sm], [8, 'H', sl], [9, 'I', st]] as const) {
     const cell = ws.getCell(r, c);
-    cell.value = v;
+    cell.value = rows.length ? { formula: `SUM(${col}${first}:${col}${last})`, result: total } : total;
     cell.font = { bold: true, size: 11, name: FONT };
     cell.numFmt = MONEY;
   }
@@ -97,7 +102,7 @@ function writeItemsSheet(ws: ExcelJS.Worksheet, rows: Item[], title: string, sub
   if (rows.length) ws.autoFilter = `A${hr}:K${r - 1}`;
 }
 
-/** ชีตหน้าแรก: สรุปยอดต่อหมวด + สัดส่วน */
+/** ชีตหน้าแรก: สรุปยอดต่อหมวด + สัดส่วน — ลิงก์สูตรไปยังชีตแต่ละหมวด */
 function writeOverview(ws: ExcelJS.Worksheet, data: ReportData) {
   const { meta, catTotals, grand } = data;
   ws.mergeCells('A1:F1');
@@ -115,30 +120,41 @@ function writeOverview(ws: ExcelJS.Worksheet, data: ReportData) {
   ['ลำดับ', 'หมวดงาน', 'จำนวนรายการ', 'ค่าวัสดุรวม', 'ค่าแรงรวม', 'รวมเป็นเงิน', '% โครงการ']
     .forEach((h, i) => hdr(ws.getCell(hr, i + 1), h));
 
-  let r = hr + 1;
-  let n = 1;
   const orders = [...catTotals.keys()].sort((a, b) => a - b);
+  const firstCat = hr + 1;
+  const grandRow = firstCat + orders.length; // แถวรวมทั้งโครงการ
+  let r = firstCat;
+  let n = 1;
+  // คอลัมน์ overview: D=ค่าวัสดุรวม E=ค่าแรงรวม F=รวมเป็นเงิน G=%
   for (const order of orders) {
     const t = catTotals.get(order)!;
     const label = CATS[order]?.[0] ?? CATS[99][0];
+    const sheetName = (CATS[order]?.[1] ?? CATS[99][1]).slice(0, 31);
+    const subRow = 5 + t.count; // แถว subtotal ในชีตหมวดนั้น (hr=4 -> items เริ่ม 5)
     const pct = grand ? (t.tot / grand) * 100 : 0;
-    const vals: Array<string | number> = [n, label, t.count, t.mat, t.lab, t.tot, pct];
+    const vals: ExcelJS.CellValue[] = [
+      n, label, t.count,
+      { formula: `'${sheetName}'!F${subRow}`, result: t.mat }, // ดึงยอดวัสดุจากชีตหมวด
+      { formula: `'${sheetName}'!H${subRow}`, result: t.lab }, // ดึงยอดค่าแรงจากชีตหมวด
+      { formula: `D${r}+E${r}`, result: t.tot }, // รวมเป็นเงิน
+      t.tot === 0 ? '—' : { formula: `IF($F$${grandRow}=0,0,F${r}/$F$${grandRow}*100)`, result: pct },
+    ];
     vals.forEach((v, ci) => {
       const c = ci + 1;
       const cell = ws.getCell(r, c);
-      cell.value = v as ExcelJS.CellValue;
+      cell.value = v;
       cell.font = { size: 11, name: FONT };
       cell.border = BORDER;
       if (c >= 4 && c <= 6) cell.numFmt = MONEY;
       else if (c === 7) cell.numFmt = PCT;
       else if (c === 3) cell.alignment = { horizontal: 'center' };
     });
-    if (t.tot === 0) ws.getCell(r, 7).value = '—';
     r += 1;
     n += 1;
   }
+  const lastCat = r - 1;
 
-  // grand total
+  // grand total — =SUM(...) ของทุกหมวด
   let tm = 0;
   let tl = 0;
   for (const t of catTotals.values()) {
@@ -147,9 +163,9 @@ function writeOverview(ws: ExcelJS.Worksheet, data: ReportData) {
   }
   ws.getCell(r, 2).value = 'รวมทั้งโครงการ';
   ws.getCell(r, 2).font = { bold: true, size: 12, name: FONT };
-  for (const [c, v] of [[4, tm], [5, tl], [6, grand]] as const) {
+  for (const [c, col, total] of [[4, 'D', tm], [5, 'E', tl], [6, 'F', grand]] as const) {
     const cell = ws.getCell(r, c);
-    cell.value = v;
+    cell.value = orders.length ? { formula: `SUM(${col}${firstCat}:${col}${lastCat})`, result: total } : total;
     cell.font = { bold: true, size: 12, name: FONT };
     cell.numFmt = MONEY;
   }
