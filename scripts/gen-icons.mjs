@@ -18,7 +18,23 @@ const dir = join(root, 'public', 'icons');
 const srcPng = join(dir, 'source.png');
 const srcSvg = join(dir, 'icon-master.svg');
 
-const NAVY = { r: 19, g: 41, b: 74, alpha: 1 }; // #13294a (maskable background)
+const NAVY = { r: 19, g: 41, b: 74, alpha: 1 }; // #13294a (default maskable background)
+
+/** maskable background: sample the source icon's corner so padding blends, else navy */
+async function bgColor() {
+  if (!existsSync(srcPng)) return NAVY;
+  try {
+    const { data } = await sharp(srcPng)
+      .extract({ left: 0, top: 0, width: 8, height: 8 })
+      .resize(1, 1)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    return { r: data[0], g: data[1], b: data[2], alpha: 1 };
+  } catch {
+    return NAVY;
+  }
+}
 
 async function loadSource(size) {
   if (existsSync(srcPng)) {
@@ -34,10 +50,11 @@ async function plain(size, out) {
 }
 
 async function maskable(size, out) {
-  // logo at 80% inside a full-bleed navy square (safe-zone for adaptive icons)
+  // logo at 80% inside a full-bleed square (safe-zone for adaptive icons)
   const inner = Math.round(size * 0.8);
+  const bg = await bgColor();
   const logo = await (await loadSource(inner)).png().toBuffer();
-  await sharp({ create: { width: size, height: size, channels: 4, background: NAVY } })
+  await sharp({ create: { width: size, height: size, channels: 4, background: bg } })
     .composite([{ input: logo, gravity: 'center' }])
     .png()
     .toFile(join(dir, out));
