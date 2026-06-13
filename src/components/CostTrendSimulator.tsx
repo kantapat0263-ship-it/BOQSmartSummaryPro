@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useMemo, useState } from 'react';
-import { TrendingUp, Info } from 'lucide-react';
+import { TrendingUp, Info, Calculator, ChevronDown } from 'lucide-react';
 import {
   Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, ReferenceLine,
 } from 'recharts';
@@ -135,9 +135,53 @@ export function CostTrendSimulator({ grand }: CostTrendSimulatorProps) {
         </ResponsiveContainer>
       </div>
 
-      <div className="px-6 pb-6 -mt-2 flex items-start gap-2 text-xs text-muted-foreground">
-        <Info className="w-4 h-4 shrink-0 mt-0.5" />
-        <span>เป็น <b>ภาพจำลองตามสมมติฐานที่กรอก</b> (ทบต้นรายเดือน) ไม่ใช่การพยากรณ์จริง — ใช้ดัชนีราคาวัสดุก่อสร้าง/ราคากลางช่วยตั้งค่า %</span>
+      <div className="px-6 pb-6 -mt-2 space-y-3">
+        <div className="flex items-start gap-2 text-xs text-muted-foreground">
+          <Info className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>เป็น <b>ภาพจำลองตามสมมติฐานที่กรอก</b> ไม่ใช่การพยากรณ์จริง</span>
+        </div>
+
+        <details className="group rounded-xl border border-border/60 bg-muted/20 overflow-hidden">
+          <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold flex items-center gap-2 hover:bg-muted/40 transition-colors">
+            <Calculator className="w-4 h-4 text-secondary" />
+            วิธีคำนวณ (กดเพื่อดูที่มา)
+            <ChevronDown className="w-4 h-4 ml-auto transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="px-4 pb-4 pt-1 text-sm space-y-3 text-muted-foreground">
+            <div>
+              <p className="font-semibold text-foreground mb-1">1) ต้นทุนในอนาคต (ทบต้น)</p>
+              <p className="font-mono text-xs bg-background rounded-lg p-2 border border-border/60">
+                ต้นทุนอนาคต = ต้นทุนปัจจุบัน × (1 + อัตราต่อปี)<sup>เดือน ÷ 12</sup>
+              </p>
+              <p className="text-xs mt-1">
+                แทนค่า: ฿{fmt0(grand)} × (1 + {rate}%)<sup>{months}÷12</sup> = <b className="text-foreground">฿{fmt0(projected)}</b>
+                {' '}(เพิ่มขึ้น {diffPct > 0 ? '+' : ''}{diffPct.toFixed(1)}%)
+              </p>
+              <p className="text-xs mt-1">ใช้การ <b>ทบต้นรายปี</b> (ราคาขึ้นต่อเนื่อง) แปลงเป็นรายเดือนเพื่อวาดกราฟ</p>
+            </div>
+
+            {profit && (
+              <div>
+                <p className="font-semibold text-foreground mb-1">2) ผลกระทบต่อกำไร (ราคาขายล็อกไว้แล้ว)</p>
+                <p className="font-mono text-xs bg-background rounded-lg p-2 border border-border/60 leading-relaxed">
+                  ราคาขาย = ต้นทุนปัจจุบัน × (1 + กำไร%) = ฿{fmt0(profit.sell)}<br />
+                  กำไรคงเหลือ = ราคาขาย − ต้นทุนอนาคต = ฿{fmt0(profit.then)}<br />
+                  กำไรที่หาย = ต้นทุนที่เพิ่มขึ้น = ฿{fmt0(diff)}
+                </p>
+                <p className="text-xs mt-1">เพราะราคาขายเสนอไปแล้ว (คงที่) ต้นทุนที่เพิ่มทุกบาท = กำไรที่หายไปตรงๆ</p>
+              </div>
+            )}
+
+            <div>
+              <p className="font-semibold text-foreground mb-1">ข้อจำกัด & แหล่งอ้างอิง</p>
+              <ul className="text-xs list-disc list-inside space-y-0.5">
+                <li>ใช้ <b>อัตราเดียวรวมทุกหมวด</b> ไม่ได้แยกเหล็ก/ปูน/ค่าแรง และไม่รวมปัจจัยอื่น (อัตราแลกเปลี่ยน, ดีมานด์, ฤดูกาล)</li>
+                <li>ตัวเลขแม่นยำเท่ากับ <b>สมมติฐาน %</b> ที่กรอก — ควรอิงข้อมูลจริง</li>
+                <li>แนะนำตั้งค่า % จาก <b>ดัชนีราคาวัสดุก่อสร้าง</b> (สนง.นโยบายและยุทธศาสตร์การค้า กระทรวงพาณิชย์) หรือ <b>ราคากลาง</b> (กรมบัญชีกลาง)</li>
+              </ul>
+            </div>
+          </div>
+        </details>
       </div>
     </div>
   );
