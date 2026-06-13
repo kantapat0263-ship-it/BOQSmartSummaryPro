@@ -1,8 +1,9 @@
 /**
- * project-store.ts — บันทึก/เปิดโครงการที่วิเคราะห์แล้ว ลงในเครื่อง (IndexedDB)
- * ทำงานในเบราว์เซอร์ทันที ไม่ต้องตั้งค่า/ล็อกอิน — ข้อมูลไม่หายเมื่อปิดแอป
- * (เป็นชั้น "บันทึกโครงการ" ของ Phase 2 แบบ local-first; ต่อ cloud/ทีมได้ภายหลัง)
+ * project-store.ts — บันทึก/เปิดโครงการ
+ * - ล็อกอินแล้ว (มี Supabase cloud) -> เก็บบน cloud (sync ข้ามเครื่อง/แชร์ได้)
+ * - ยังไม่ล็อกอิน / ไม่มี cloud      -> เก็บในเครื่อง (IndexedDB) เหมือนเดิม
  */
+import { supabase, currentUser } from './supabase';
 
 const DB_NAME = 'pac-cost-control';
 const STORE = 'projects';
@@ -15,10 +16,10 @@ export interface SavedProject {
   fileName: string;
   fileSize: number;
   grand: number;
-  // ผลวิเคราะห์เต็ม (ProcessResult) เก็บไว้เพื่อเปิดดู/ดาวน์โหลดซ้ำ
   result: unknown;
 }
 
+// ---------- local (IndexedDB) ----------
 function hasIDB(): boolean {
   return typeof window !== 'undefined' && typeof window.indexedDB !== 'undefined';
 }
@@ -28,9 +29,7 @@ function openDB(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) {
-        db.createObjectStore(STORE, { keyPath: 'id' });
-      }
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -50,25 +49,89 @@ function run<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequ
   );
 }
 
-export async function saveProject(p: SavedProject): Promise<void> {
-  if (!hasIDB()) throw new Error('เบราว์เซอร์ไม่รองรับการบันทึก (IndexedDB)');
-  await run('readwrite', (s) => s.put(p));
-}
-
-export async function listProjects(): Promise<SavedProject[]> {
+const localSave = (p: SavedProject) => run<void>('readwrite', (s) => s.put(p));
+const localList = async (): Promise<SavedProject[]> => {
   if (!hasIDB()) return [];
   const all = await run<SavedProject[]>('readonly', (s) => s.getAll());
   return (all ?? []).sort((a, b) => b.savedAt - a.savedAt);
+};
+const localGet = (id: string) => run<SavedProject | undefined>('readonly', (s) => s.get(id));
+const localDelete = (id: string) => run<void>('readwrite', (s) => s.delete(id));
+
+// ---------- cloud (Supabase) ----------
+interface Row {
+  id: string;
+  name: string;
+  file_name: string;
+  file_size: number;
+  grand: number;
+  result: unknown;
+  saved_at: string;
+}
+const rowToProject = (r: Row): SavedProject => ({
+  id: r.id,
+  name: r.name,
+  savedAt: new Date(r.saved_at).getTime(),
+  fileName: r.file_name,
+  fileSize: r.file_size,
+  grand: r.grand,
+  result: r.result,
+});
+
+async function cloudSave(p: SavedProject, uid: string): Promise<void> {
+  const { error } = await supabase!.from('projects').upsert({
+    id: p.id,
+    user_id: uid,
+    name: p.name,
+    file_name: p.fileName,
+    file_size: p.fileSize,
+    grand: p.grand,
+    result: p.result,
+    saved_at: new Date(p.savedAt).toISOString(),
+  });
+  if (error) throw error;
+}
+async function cloudList(): Promise<SavedProject[]> {
+  const { data, error } = await supabase!
+    .from('projects')
+    .select('*')
+    .order('saved_at', { ascending: false });
+  if (error) throw error;
+  return (data as Row[] | null ?? []).map(rowToProject);
+}
+async function cloudGet(id: string): Promise<SavedProject | undefined> {
+  const { data } = await supabase!.from('projects').select('*').eq('id', id).maybeSingle();
+  return data ? rowToProject(data as Row) : undefined;
+}
+async function cloudDelete(id: string): Promise<void> {
+  const { error } = await supabase!.from('projects').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// ---------- unified (เลือก cloud/local อัตโนมัติ) ----------
+export async function saveProject(p: SavedProject): Promise<void> {
+  const u = await currentUser();
+  if (u && supabase) return cloudSave(p, u.id);
+  if (!hasIDB()) throw new Error('เบราว์เซอร์ไม่รองรับการบันทึก');
+  await localSave(p);
+}
+
+export async function listProjects(): Promise<SavedProject[]> {
+  const u = await currentUser();
+  if (u && supabase) return cloudList();
+  return localList();
 }
 
 export async function getProject(id: string): Promise<SavedProject | undefined> {
-  if (!hasIDB()) return undefined;
-  return run<SavedProject | undefined>('readonly', (s) => s.get(id));
+  const u = await currentUser();
+  if (u && supabase) return cloudGet(id);
+  return localGet(id);
 }
 
 export async function deleteProject(id: string): Promise<void> {
-  if (!hasIDB()) return;
-  await run('readwrite', (s) => s.delete(id));
+  const u = await currentUser();
+  if (u && supabase) return cloudDelete(id);
+  await localDelete(id);
 }
 
 export function newId(): string {
