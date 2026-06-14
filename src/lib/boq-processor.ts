@@ -24,6 +24,8 @@ function isLumpUnit(u: unknown): boolean {
 }
 // รหัสหมวดหลัก X.Y.Z (เช่น 5.2.3)
 const SECTION_CODE = /^\d+\.\d+\.\d+/;
+// หมวดเริ่มต้น (ก่อนเจอหัวข้อหมวดในไฟล์)
+const DEFAULT_CAT = 'งานอื่นๆ';
 
 // ---------- นิยามหมวดงาน (order -> ชื่อเต็ม, ชื่อแท็บชีต) ----------
 // order เป็นทั้งลำดับการแสดงผลและคีย์ภายใน
@@ -305,8 +307,7 @@ export interface ExtractMeta {
   src: string;
   raw_lines: number;
   sheets: string[];
-  byCat: Map<number, Map<string, Item>>;
-  sectionsSeen: Map<number, Set<string>>;
+  byCat: Map<string, Map<string, Item>>; // key = ชื่อหมวด (ตามไฟล์)
   warnings: string[];
   statedTotals: number[];
 }
@@ -319,10 +320,9 @@ export interface ExtractOptions {
   excludeSheets?: Set<string>;
 }
 
-/** อ่าน 1 ไฟล์ -> โครงสร้างที่ยุบซ้ำแล้ว แยกตามหมวด */
+/** อ่าน 1 ไฟล์ -> โครงสร้างที่ยุบซ้ำแล้ว แยกตามหมวด (ชื่อหมวดตามที่ไฟล์จัดมา) */
 export function extract(wb: ExcelJS.Workbook, src: string, opts: ExtractOptions = {}): ExtractMeta {
-  const byCat = new Map<number, Map<string, Item>>();
-  const sectionsSeen = new Map<number, Set<string>>();
+  const byCat = new Map<string, Map<string, Item>>();
   const warnings: string[] = [];
   let rawLines = 0;
   const usedSheets: string[] = [];
@@ -341,7 +341,7 @@ export function extract(wb: ExcelJS.Workbook, src: string, opts: ExtractOptions 
       );
     }
     const sheetTag = title.trim().split(/\s+/)[0] || title;
-    let curCat = 99; // ก่อนเจอหมวดแรก -> อื่นๆ
+    let curCat = DEFAULT_CAT; // ก่อนเจอหมวดแรก
     let started = !opts.dropRecapBlock; // โหมด dropRecap: ยังไม่เริ่มนับจนเจอหน่วยวัดจริง
 
     for (let r = col.header_row + 1; r <= ws.rowCount; r++) {
@@ -357,25 +357,17 @@ export function extract(wb: ExcelJS.Workbook, src: string, opts: ExtractOptions 
       const unit = cellValue(ws.getCell(r, col.unit));
       const qty = cellValue(ws.getCell(r, col.qty));
 
-      // แถวหัวข้อหมวดหลัก X.Y.Z -> เปลี่ยนหมวดปัจจุบัน
+      // แถวหัวข้อหมวดหลัก X.Y.Z -> ใช้ชื่อหมวด "ตามที่ไฟล์จัดมา"
       if (typeof c1 === 'string' && SECTION_CODE.test(c1.trim()) && desc) {
-        curCat = categorize(desc);
-        if (!sectionsSeen.has(curCat)) sectionsSeen.set(curCat, new Set());
-        sectionsSeen.get(curCat)!.add(String(desc).replace(/\s+/g, ' ').trim());
+        curCat = cleanName(desc);
         continue;
       }
 
-      // หัวข้อหมวดแบบ PAC: แถวมีชื่อ ("หมวดงาน.../งาน...") แต่ไม่มีหน่วย -> อัปเดตหมวดปัจจุบัน
+      // หัวข้อหมวดแบบ PAC: แถวมีชื่อ แต่ไม่มีหน่วย -> ใช้ชื่อ "หมวด" จากไฟล์
       if (desc && !unit) {
-        const dStr = String(desc).trim();
-        if (dStr.includes('หมวด') || /^งาน/.test(dStr)) {
-          const cat = categorize(dStr);
-          if (cat !== 99) {
-            curCat = cat;
-            if (!sectionsSeen.has(cat)) sectionsSeen.set(cat, new Set());
-            sectionsSeen.get(cat)!.add(dStr.replace(/\s+/g, ' '));
-          }
-        }
+        const dStr = cleanName(desc);
+        if (dStr.includes('หมวด')) curCat = dStr;
+        else if (/^งาน/.test(dStr) && curCat === DEFAULT_CAT) curCat = dStr;
       }
 
       // คัดเฉพาะ "บรรทัดของจริง"
@@ -411,15 +403,14 @@ export function extract(wb: ExcelJS.Workbook, src: string, opts: ExtractOptions 
     }
   });
 
-  // เตือนเมื่อจัดหมวดไม่ได้ (ไม่พบรหัส X.Y.Z) ของตกลง "งานอื่นๆ" ทั้งหมด
-  if (byCat.size === 1 && byCat.has(99) && rawLines > 0) {
+  // เตือนเมื่อแยกหมวดไม่ได้ (ทุกอย่างตกหมวดเริ่มต้น) -> ไฟล์อาจไม่มีหัวข้อหมวดชัด
+  if (byCat.size === 1 && byCat.has(DEFAULT_CAT) && rawLines > 0) {
     warnings.push(
-      'ไม่พบรหัสหมวดงาน (รูปแบบ X.Y.Z) ในไฟล์ จึงไม่สามารถแยกหมวดได้ — ' +
-        'รวมทุกรายการไว้ใน "งานอื่นๆ" (ยอดรวมยังถูกต้อง)',
+      'ไม่พบหัวข้อหมวดงานในไฟล์ จึงแยกหมวดไม่ได้ — รวมทุกรายการไว้ใน "งานอื่นๆ" (ยอดรวมยังถูกต้อง)',
     );
   }
 
-  return { src, raw_lines: rawLines, sheets: usedSheets, byCat, sectionsSeen, warnings, statedTotals: findStatedTotals(wb) };
+  return { src, raw_lines: rawLines, sheets: usedSheets, byCat, warnings, statedTotals: findStatedTotals(wb) };
 }
 
 // ---------- report data (totals / global merge) ----------
@@ -432,15 +423,15 @@ export interface CatTotal {
 
 export interface ReportData {
   meta: ExtractMeta;
-  catTotals: Map<number, CatTotal>;
+  catTotals: Map<string, CatTotal>; // key = ชื่อหมวด (ตามลำดับในไฟล์)
   grand: number;
   globalItems: Map<string, Item>;
 }
 
 export function buildReportData(meta: ExtractMeta): ReportData {
-  const catTotals = new Map<number, CatTotal>();
+  const catTotals = new Map<string, CatTotal>();
   let grand = 0;
-  for (const [order, bucket] of meta.byCat) {
+  for (const [cat, bucket] of meta.byCat) {
     let mat = 0;
     let lab = 0;
     let tot = 0;
@@ -449,7 +440,7 @@ export function buildReportData(meta: ExtractMeta): ReportData {
       lab += i.lab;
       tot += i.tot;
     }
-    catTotals.set(order, { mat, lab, tot, count: bucket.size });
+    catTotals.set(cat, { mat, lab, tot, count: bucket.size });
     grand += tot;
   }
 
@@ -540,8 +531,8 @@ function buildVerify(grand: number, stated: number[]): VerifyResult {
 export function toDashboard(data: ReportData): DashboardResult {
   const { catTotals, grand, meta } = data;
   const summary: SummaryRow[] = [...catTotals.entries()]
-    .map(([order, t]) => ({
-      cat: CATS[order]?.[0] ?? CATS[99][0],
+    .map(([cat, t]) => ({
+      cat,
       count: t.count,
       mat: t.mat,
       lab: t.lab,
@@ -552,13 +543,11 @@ export function toDashboard(data: ReportData): DashboardResult {
 
   // รายการวัสดุระดับ item (หนึ่งแถวต่อ หมวด+รายการ) เรียงตามยอดมากสุด
   const materials: MaterialRow[] = [];
-  const orders = [...meta.byCat.keys()].sort((a, b) => a - b);
-  for (const order of orders) {
-    const label = CATS[order]?.[0] ?? CATS[99][0];
-    for (const [k, it] of meta.byCat.get(order)!) {
+  for (const [cat, bucket] of meta.byCat) {
+    for (const [k, it] of bucket) {
       materials.push({
         key: k,
-        cat: label,
+        cat,
         name: it.name,
         unit: it.unit,
         qty: it.qty,

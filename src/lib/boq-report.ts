@@ -7,7 +7,32 @@
  */
 
 import ExcelJS from 'exceljs';
-import { CATS, itemsToRows, type Item, type ReportData } from './boq-processor';
+import { itemsToRows, type Item, type ReportData } from './boq-processor';
+
+/** ชื่อชีต Excel: ตัดอักขระต้องห้าม + จำกัด 31 ตัว */
+function sanitizeSheetName(name: string): string {
+  const s = name.replace(/[\\/?*[\]:]/g, ' ').replace(/\s+/g, ' ').trim();
+  return (s || 'หมวด').slice(0, 31);
+}
+
+/** สร้างชื่อชีตที่ไม่ซ้ำ ต่อแต่ละหมวด (ตามลำดับในไฟล์) */
+function buildSheetNames(cats: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const used = new Set<string>();
+  for (const cat of cats) {
+    const base = sanitizeSheetName(cat);
+    let nm = base;
+    let i = 2;
+    while (used.has(nm)) {
+      const suf = ` (${i})`;
+      nm = base.slice(0, 31 - suf.length) + suf;
+      i++;
+    }
+    used.add(nm);
+    out.set(cat, nm);
+  }
+  return out;
+}
 
 const FONT = 'TH Sarabun New';
 const MONEY = '#,##0.00';
@@ -103,7 +128,7 @@ function writeItemsSheet(ws: ExcelJS.Worksheet, rows: Item[], title: string, sub
 }
 
 /** ชีตหน้าแรก: สรุปยอดต่อหมวด + สัดส่วน — ลิงก์สูตรไปยังชีตแต่ละหมวด */
-function writeOverview(ws: ExcelJS.Worksheet, data: ReportData) {
+function writeOverview(ws: ExcelJS.Worksheet, data: ReportData, sheetNames: Map<string, string>) {
   const { meta, catTotals, grand } = data;
   ws.mergeCells('A1:F1');
   ws.getCell('A1').value = 'สรุปต่อหมวดงาน';
@@ -120,16 +145,14 @@ function writeOverview(ws: ExcelJS.Worksheet, data: ReportData) {
   ['ลำดับ', 'หมวดงาน', 'จำนวนรายการ', 'ค่าวัสดุรวม', 'ค่าแรงรวม', 'รวมเป็นเงิน', '% โครงการ']
     .forEach((h, i) => hdr(ws.getCell(hr, i + 1), h));
 
-  const orders = [...catTotals.keys()].sort((a, b) => a - b);
   const firstCat = hr + 1;
-  const grandRow = firstCat + orders.length; // แถวรวมทั้งโครงการ
+  const grandRow = firstCat + catTotals.size; // แถวรวมทั้งโครงการ
   let r = firstCat;
   let n = 1;
-  // คอลัมน์ overview: D=ค่าวัสดุรวม E=ค่าแรงรวม F=รวมเป็นเงิน G=%
-  for (const order of orders) {
-    const t = catTotals.get(order)!;
-    const label = CATS[order]?.[0] ?? CATS[99][0];
-    const sheetName = (CATS[order]?.[1] ?? CATS[99][1]).slice(0, 31);
+  // คอลัมน์ overview: D=ค่าวัสดุรวม E=ค่าแรงรวม F=รวมเป็นเงิน G=% (เรียงตามลำดับในไฟล์)
+  for (const [cat, t] of catTotals) {
+    const label = cat;
+    const sheetName = sheetNames.get(cat) ?? sanitizeSheetName(cat);
     const subRow = 5 + t.count; // แถว subtotal ในชีตหมวดนั้น (hr=4 -> items เริ่ม 5)
     const pct = grand ? (t.tot / grand) * 100 : 0;
     const vals: ExcelJS.CellValue[] = [
@@ -165,7 +188,7 @@ function writeOverview(ws: ExcelJS.Worksheet, data: ReportData) {
   ws.getCell(r, 2).font = { bold: true, size: 12, name: FONT };
   for (const [c, col, total] of [[4, 'D', tm], [5, 'E', tl], [6, 'F', grand]] as const) {
     const cell = ws.getCell(r, c);
-    cell.value = orders.length ? { formula: `SUM(${col}${firstCat}:${col}${lastCat})`, result: total } : total;
+    cell.value = catTotals.size ? { formula: `SUM(${col}${firstCat}:${col}${lastCat})`, result: total } : total;
     cell.font = { bold: true, size: 12, name: FONT };
     cell.numFmt = MONEY;
   }
@@ -187,18 +210,19 @@ function writeOverview(ws: ExcelJS.Worksheet, data: ReportData) {
 export async function generateReport(data: ReportData): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
 
-  // 1) overview
-  writeOverview(wb.addWorksheet('สรุปต่อหมวด'), data);
+  // ชื่อหมวดตามลำดับในไฟล์ + ชื่อชีตที่ไม่ซ้ำ
+  const cats = [...data.meta.byCat.keys()];
+  const sheetNames = buildSheetNames(cats);
 
-  // 2) ชีตละหมวด (เฉพาะหมวดที่มีรายการ)
-  const orders = [...data.meta.byCat.keys()].sort((a, b) => a - b);
-  for (const order of orders) {
-    const bucket = data.meta.byCat.get(order)!;
+  // 1) overview
+  writeOverview(wb.addWorksheet('สรุปต่อหมวด'), data, sheetNames);
+
+  // 2) ชีตละหมวด (ตามลำดับในไฟล์)
+  for (const cat of cats) {
+    const bucket = data.meta.byCat.get(cat)!;
     if (bucket.size === 0) continue;
-    const [label, tab] = CATS[order] ?? CATS[99];
-    const ws = wb.addWorksheet(tab.slice(0, 31));
-    const srcs = [...(data.meta.sectionsSeen.get(order) ?? [])].sort().join(' / ');
-    writeItemsSheet(ws, itemsToRows(bucket), `หมวด: ${label}`, srcs ? `รวมจากหัวข้อ BOQ: ${srcs}` : '');
+    const ws = wb.addWorksheet(sheetNames.get(cat)!);
+    writeItemsSheet(ws, itemsToRows(bucket), `หมวด: ${cat}`, '');
   }
 
   // 3) วัสดุรวมทุกหมวด
