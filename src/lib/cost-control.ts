@@ -45,21 +45,32 @@ export interface VariationOrder {
   note?: string;
 }
 
+/** งวดงานที่เรียกเก็บจากเจ้าของงาน (เงินเข้า) */
+export interface PaymentMilestone {
+  id: string;
+  name: string;
+  date: string; // yyyy-mm-dd (วันที่คาดรับ/รับจริง)
+  amount: number; // มูลค่างวด (ก่อนหักเงินประกัน)
+  received: boolean; // รับเงินแล้วหรือยัง
+}
+
 /** ข้อมูลคุมต้นทุนทั้งหมดของ 1 โครงการ (เก็บเป็นก้อนเดียว) */
 export interface CostControlData {
   projectId: string;
   targetProfitPct: number; // กำไรเป้าหมาย % (เช่น 15)
   overheadBudget: number; // งบค่าโสหุ้ยสนามที่ตั้งไว้
+  retentionPct: number; // เงินประกันผลงานที่เจ้าของหักต่องวด %
   progress: Record<string, number>; // หมวด -> % ความคืบหน้า (0..100)
   entries: CostEntry[];
   vos: VariationOrder[];
+  payments: PaymentMilestone[];
   updatedAt: number;
 }
 
 export function emptyCostControl(projectId: string): CostControlData {
   return {
-    projectId, targetProfitPct: 15, overheadBudget: 0,
-    progress: {}, entries: [], vos: [], updatedAt: Date.now(),
+    projectId, targetProfitPct: 15, overheadBudget: 0, retentionPct: 0,
+    progress: {}, entries: [], vos: [], payments: [], updatedAt: Date.now(),
   };
 }
 
@@ -223,5 +234,78 @@ export function computeCostSummary(budgetCats: BudgetCat[], data: CostControlDat
     paid, committed, totalActual, totalEarned, totalEAC,
     forecastProfit, forecastProfitPct, profitVariance, overallProgressPct, cpi, status,
     categories,
+  };
+}
+
+// ---------- กระแสเงินสด (Cash Flow) ----------
+export interface CashMonth {
+  month: string; // YYYY-MM
+  cashIn: number; // รับสุทธิ (หลังหักเงินประกัน)
+  cashOut: number; // จ่ายจริง
+  net: number;
+  cumulative: number; // ยอดสะสม (running balance)
+}
+
+export interface CashflowSummary {
+  receivedGross: number; // งวดที่รับแล้ว (ก่อนหัก)
+  retentionHeld: number; // เงินประกันถูกหักสะสม
+  receivedNet: number; // รับสุทธิ
+  pendingPayments: number; // งวดที่ยังไม่รับ
+  paidOut: number; // จ่ายออกแล้ว (สถานะจ่ายแล้ว)
+  committedOut: number; // ผูกพันรอจ่าย
+  netCash: number; // receivedNet − paidOut
+  months: CashMonth[];
+  minCumulative: number; // จุดต่ำสุดของยอดสะสม (ติดลบ = เงินขาดมือ)
+}
+
+const monthOf = (d: string): string => (d || '').slice(0, 7) || 'ไม่ระบุ';
+
+export function computeCashflow(data: CostControlData): CashflowSummary {
+  const ret = Math.min(100, Math.max(0, data.retentionPct || 0)) / 100;
+
+  let receivedGross = 0;
+  let pendingPayments = 0;
+  const inByMonth = new Map<string, number>();
+  for (const p of data.payments ?? []) {
+    const amt = Number(p.amount) || 0;
+    if (p.received) {
+      receivedGross += amt;
+      const net = amt * (1 - ret);
+      inByMonth.set(monthOf(p.date), (inByMonth.get(monthOf(p.date)) ?? 0) + net);
+    } else {
+      pendingPayments += amt;
+    }
+  }
+  const retentionHeld = receivedGross * ret;
+  const receivedNet = receivedGross - retentionHeld;
+
+  let paidOut = 0;
+  let committedOut = 0;
+  const outByMonth = new Map<string, number>();
+  for (const e of data.entries ?? []) {
+    const amt = Number(e.amount) || 0;
+    if (e.status === 'committed') { committedOut += amt; continue; }
+    paidOut += amt;
+    outByMonth.set(monthOf(e.date), (outByMonth.get(monthOf(e.date)) ?? 0) + amt);
+  }
+
+  const allMonths = Array.from(new Set([...inByMonth.keys(), ...outByMonth.keys()]))
+    .filter((m) => m !== 'ไม่ระบุ')
+    .sort();
+  let cumulative = 0;
+  let minCumulative = 0;
+  const months: CashMonth[] = allMonths.map((month) => {
+    const cashIn = inByMonth.get(month) ?? 0;
+    const cashOut = outByMonth.get(month) ?? 0;
+    const net = cashIn - cashOut;
+    cumulative += net;
+    if (cumulative < minCumulative) minCumulative = cumulative;
+    return { month, cashIn, cashOut, net, cumulative };
+  });
+
+  return {
+    receivedGross, retentionHeld, receivedNet, pendingPayments,
+    paidOut, committedOut, netCash: receivedNet - paidOut,
+    months, minCumulative,
   };
 }

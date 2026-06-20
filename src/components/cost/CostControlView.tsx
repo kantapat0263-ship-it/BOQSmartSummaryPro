@@ -5,16 +5,18 @@ import Link from 'next/link';
 import {
   ArrowLeft, TrendingUp, TrendingDown, Wallet, Target, Activity, Plus, Trash2,
   Cloud, HardDrive, CheckCircle2, AlertTriangle, Gauge, Layers, FilePlus2, Building2,
+  Banknote, ShieldCheck, ArrowDownLeft, ArrowUpRight,
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell,
+  ComposedChart, Line,
 } from 'recharts';
 import { AnimatedNumber } from '@/components/AnimatedNumber';
 import { saveCostControl } from '@/lib/cost-control-store';
 import {
-  computeCostSummary, COST_TYPES, costTypeLabel, OVERHEAD_CAT,
+  computeCostSummary, computeCashflow, COST_TYPES, costTypeLabel, OVERHEAD_CAT,
   type CostControlData, type CostEntry, type CostType, type EntryStatus, type BudgetCat, type RAG,
-  type VariationOrder, type CostSummary,
+  type VariationOrder, type CostSummary, type PaymentMilestone, type CashflowSummary,
 } from '@/lib/cost-control';
 
 const fmt0 = (n: number) => Math.round(n).toLocaleString('th-TH', { maximumFractionDigits: 0 });
@@ -58,6 +60,7 @@ export function CostControlView({ projectId, projectName, grand, budgetCats, ini
   }, [data]);
 
   const summary = useMemo(() => computeCostSummary(budgetCats, data), [budgetCats, data]);
+  const cash = useMemo(() => computeCashflow(data), [data]);
 
   const setProgress = (cat: string, val: number) =>
     setData((d) => ({ ...d, progress: { ...d.progress, [cat]: val } }));
@@ -69,6 +72,11 @@ export function CostControlView({ projectId, projectName, grand, budgetCats, ini
   const delVO = (id: string) => setData((d) => ({ ...d, vos: (d.vos ?? []).filter((x) => x.id !== id) }));
   const toggleVO = (id: string) =>
     setData((d) => ({ ...d, vos: (d.vos ?? []).map((x) => (x.id === id ? { ...x, approved: !x.approved } : x)) }));
+  const setRetention = (val: number) => setData((d) => ({ ...d, retentionPct: val }));
+  const addPayment = (p: PaymentMilestone) => setData((d) => ({ ...d, payments: [p, ...(d.payments ?? [])] }));
+  const delPayment = (id: string) => setData((d) => ({ ...d, payments: (d.payments ?? []).filter((x) => x.id !== id) }));
+  const togglePayment = (id: string) =>
+    setData((d) => ({ ...d, payments: (d.payments ?? []).map((x) => (x.id === id ? { ...x, received: !x.received } : x)) }));
 
   // หมวดทั้งหมดสำหรับ dropdown (BOQ + VO + ค่าโสหุ้ย)
   const baseCats = budgetCats.map((b) => b.category);
@@ -208,6 +216,22 @@ export function CostControlView({ projectId, projectName, grand, budgetCats, ini
               เงินเดือนวิศวกร/โฟร์แมน, ออฟฟิศสนาม ฯลฯ (ต้นทุนทางอ้อม — บันทึกจ่ายจริงโดยเลือกหมวด “{OVERHEAD_CAT}”)
             </p>
           </div>
+          <div className="w-full border-t border-border/40 pt-4 flex flex-wrap items-center gap-3">
+            <div className="font-black text-primary flex items-center gap-2"><ShieldCheck className="w-5 h-5" /> เงินประกันผลงาน</div>
+            <div className="flex items-center gap-1">
+              <input
+                type="number" min={0} max={20} step={0.5}
+                value={data.retentionPct || ''}
+                onChange={(e) => setRetention(Math.min(20, Math.max(0, Number(e.target.value))))}
+                placeholder="0"
+                className="w-20 text-right font-black text-lg border border-border rounded-xl px-3 py-1.5"
+              />
+              <span className="font-black text-lg">%</span>
+            </div>
+            <p className="text-xs text-muted-foreground font-medium">
+              เจ้าของหักไว้ทุกงวด (คืนตอนจบงาน) — กระทบกระแสเงินสดเข้า
+            </p>
+          </div>
         </div>
 
         {/* ===== chart: งบ vs จ่าย vs คาดจบ ===== */}
@@ -323,7 +347,165 @@ export function CostControlView({ projectId, projectName, grand, budgetCats, ini
           onAdd={addEntry}
           onDelete={delEntry}
         />
+
+        {/* ===== กระแสเงินสด ===== */}
+        <CashflowSection
+          cash={cash}
+          payments={data.payments ?? []}
+          retentionPct={data.retentionPct || 0}
+          onAdd={addPayment}
+          onDelete={delPayment}
+          onToggle={togglePayment}
+        />
       </div>
+    </div>
+  );
+}
+
+// ---------- กระแสเงินสด ----------
+function CashflowSection({
+  cash, payments, retentionPct, onAdd, onDelete, onToggle,
+}: {
+  cash: CashflowSummary;
+  payments: PaymentMilestone[];
+  retentionPct: number;
+  onAdd: (p: PaymentMilestone) => void;
+  onDelete: (id: string) => void;
+  onToggle: (id: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [date, setDate] = useState(today());
+  const [amount, setAmount] = useState('');
+  const [received, setReceived] = useState(true);
+
+  const submit = () => {
+    const amt = Number(amount);
+    if (!name.trim() || !amt || amt <= 0) return;
+    onAdd({ id: newId(), name: name.trim(), date, amount: amt, received });
+    setName(''); setAmount('');
+  };
+
+  const inputCls = 'border border-border rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary/30 focus:outline-none';
+  const chartData = cash.months.map((m) => ({
+    name: m.month.slice(2).replace('-', '/'),
+    เงินเข้า: Math.round(m.cashIn),
+    เงินออก: -Math.round(m.cashOut),
+    สะสม: Math.round(m.cumulative),
+  }));
+
+  return (
+    <div className="bg-white rounded-3xl border border-border/60 shadow-sm overflow-hidden">
+      <div className="p-6 pb-4">
+        <h3 className="font-black text-primary flex items-center gap-2"><Banknote className="w-5 h-5" /> กระแสเงินสด (เงินเข้า-ออก)</h3>
+        <p className="text-xs text-muted-foreground font-medium">งวดงานที่รับจากเจ้าของ (เข้า) เทียบกับเงินที่จ่ายออกจริง — ดูเดือนที่เงินจะขาดมือ</p>
+      </div>
+
+      {/* cards */}
+      <div className="px-6 grid grid-cols-2 md:grid-cols-5 gap-3">
+        <CashCard icon={<ArrowDownLeft />} label="รับสุทธิแล้ว" value={cash.receivedNet} tone="emerald" />
+        <CashCard icon={<ArrowUpRight />} label="จ่ายออกแล้ว" value={cash.paidOut} tone="orange" />
+        <CashCard icon={<Wallet />} label="เงินสดสุทธิ" value={cash.netCash} tone={cash.netCash >= 0 ? 'emerald' : 'red'} />
+        <CashCard icon={<ShieldCheck />} label="เงินประกันถูกหัก" value={cash.retentionHeld} tone="slate"
+          sub={retentionPct > 0 ? `${retentionPct}% ต่องวด` : undefined} />
+        <CashCard icon={<Banknote />} label="งวดค้างรับ" value={cash.pendingPayments} tone="slate" />
+      </div>
+
+      {/* warning เงินขาดมือ */}
+      {cash.minCumulative < 0 && (
+        <div className="mx-6 mt-4 flex items-start gap-2 text-red-700 bg-red-50 border border-red-200 rounded-2xl p-3 text-sm font-semibold">
+          <AlertTriangle className="w-5 h-5 shrink-0" />
+          เตือน: กระแสเงินสดสะสมเคยติดลบถึง ฿{fmt0(cash.minCumulative)} — มีช่วงที่ต้องสำรองเงินจ่ายก่อนรับงวด
+        </div>
+      )}
+
+      {/* chart */}
+      {chartData.length > 0 && (
+        <div className="px-4 md:px-6 pt-5">
+          <ResponsiveContainer width="100%" height={300}>
+            <ComposedChart data={chartData} margin={{ left: 4, right: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" fontSize={11} />
+              <YAxis tickFormatter={(v) => `${(v / 1e6).toFixed(1)}M`} fontSize={11} />
+              <Tooltip formatter={(v: number) => `฿${fmt0(Math.abs(v))}`} />
+              <Legend />
+              <Bar dataKey="เงินเข้า" fill="#10b981" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="เงินออก" fill="#f97316" radius={[0, 0, 4, 4]} />
+              <Line type="monotone" dataKey="สะสม" stroke="#1e3a8a" strokeWidth={3} dot={{ r: 3 }} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* form */}
+      <div className="px-6 py-5 grid grid-cols-2 md:grid-cols-6 gap-2 items-center">
+        <input placeholder="ชื่องวด (เช่น งวดที่ 1)" value={name} onChange={(e) => setName(e.target.value)} className={`${inputCls} col-span-2`} />
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} />
+        <input type="number" placeholder="มูลค่างวด" value={amount} onChange={(e) => setAmount(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submit()} className={`${inputCls} text-right font-bold`} />
+        <select value={received ? 'y' : 'n'} onChange={(e) => setReceived(e.target.value === 'y')} className={inputCls}>
+          <option value="y">รับแล้ว</option>
+          <option value="n">ยังไม่รับ</option>
+        </select>
+        <button onClick={submit} disabled={!name.trim() || !Number(amount)}
+          className="bg-secondary hover:bg-secondary/90 disabled:opacity-40 text-white rounded-xl px-4 py-2 font-black text-sm inline-flex items-center justify-center gap-1.5">
+          <Plus className="w-4 h-4" /> เพิ่มงวด
+        </button>
+      </div>
+
+      {/* list */}
+      {payments.length > 0 && (
+        <div className="overflow-x-auto border-t border-border/60">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[11px] uppercase tracking-wider text-muted-foreground bg-muted/30">
+                <th className="text-left font-black px-4 py-2.5">วันที่</th>
+                <th className="text-left font-black px-3">งวด</th>
+                <th className="text-right font-black px-3">มูลค่า</th>
+                <th className="text-right font-black px-3">รับสุทธิ</th>
+                <th className="text-center font-black px-3">สถานะ</th>
+                <th className="px-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...payments].sort((a, b) => a.date.localeCompare(b.date)).map((p) => (
+                <tr key={p.id} className="border-t border-border/40 hover:bg-muted/20">
+                  <td className="px-4 py-2.5 text-muted-foreground tabular-nums">{p.date}</td>
+                  <td className="px-3 font-semibold text-primary max-w-[220px] truncate" title={p.name}>{p.name}</td>
+                  <td className="px-3 text-right tabular-nums font-bold">{fmt0(p.amount)}</td>
+                  <td className="px-3 text-right tabular-nums text-muted-foreground">{p.received ? fmt0(p.amount * (1 - retentionPct / 100)) : '—'}</td>
+                  <td className="px-3 text-center">
+                    <button onClick={() => onToggle(p.id)}
+                      className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${p.received ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {p.received ? 'รับแล้ว' : 'ยังไม่รับ'}
+                    </button>
+                  </td>
+                  <td className="px-3 text-right">
+                    <button onClick={() => onDelete(p.id)} className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CASH_TONE: Record<string, string> = {
+  emerald: 'bg-emerald-50 border-emerald-200 text-emerald-700',
+  orange: 'bg-orange-50 border-orange-200 text-orange-700',
+  red: 'bg-red-50 border-red-200 text-red-700',
+  slate: 'bg-slate-50 border-slate-200 text-slate-600',
+};
+function CashCard({ icon, label, value, tone, sub }: { icon: React.ReactNode; label: string; value: number; tone: string; sub?: string }) {
+  return (
+    <div className={`rounded-2xl border p-4 ${CASH_TONE[tone] ?? CASH_TONE.slate}`}>
+      <div className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider opacity-80">{icon}{label}</div>
+      <p className="text-xl font-black tabular-nums mt-1">฿{fmt0(value)}</p>
+      {sub && <p className="text-[10px] font-bold opacity-70">{sub}</p>}
     </div>
   );
 }
