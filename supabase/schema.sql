@@ -68,3 +68,33 @@ create policy mp_insert_own on public.material_prices
 drop policy if exists mp_delete_own on public.material_prices;
 create policy mp_delete_own on public.material_prices
   for delete to authenticated using (auth.uid() = user_id);
+
+
+-- ====== คุมต้นทุน (cost_control) — 1 ก้อนต่อ 1 โครงการ ======
+-- เก็บ กำไรเป้า / ความคืบหน้า / รายจ่ายจริง เป็น jsonb ก้อนเดียว
+create table if not exists public.cost_control (
+  project_id text primary key,
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  data       jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists cost_control_user_idx on public.cost_control (user_id);
+
+alter table public.cost_control enable row level security;
+
+drop policy if exists cc_select_own on public.cost_control;
+create policy cc_select_own on public.cost_control
+  for select using (auth.uid() = user_id);
+
+drop policy if exists cc_insert_own on public.cost_control;
+create policy cc_insert_own on public.cost_control
+  for insert with check (auth.uid() = user_id);
+
+drop policy if exists cc_update_own on public.cost_control;
+create policy cc_update_own on public.cost_control
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists cc_delete_own on public.cost_control;
+create policy cc_delete_own on public.cost_control
+  for delete using (auth.uid() = user_id);

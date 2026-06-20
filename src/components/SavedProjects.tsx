@@ -1,7 +1,8 @@
 "use client"
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { FolderOpen, Trash2, Clock, Cloud, HardDrive, Search, ChevronDown, ArrowUpDown } from 'lucide-react';
+import Link from 'next/link';
+import { FolderOpen, Trash2, Clock, Cloud, HardDrive, Search, ChevronDown, ArrowUpDown, Gauge } from 'lucide-react';
 import { listProjects, deleteProject, storageMode, type SavedProject } from '@/lib/project-store';
 
 interface SavedProjectsProps {
@@ -95,6 +96,9 @@ export function SavedProjects({ onOpen, reloadKey }: SavedProjectsProps) {
               </p>
             </button>
             <div className="flex items-center gap-1 shrink-0">
+              <Link href={`/cost/${p.id}`} className="p-2.5 rounded-xl text-secondary hover:bg-secondary/10 transition-colors" title="คุมต้นทุน">
+                <Gauge className="w-5 h-5" />
+              </Link>
               <button onClick={() => onOpen(p)} className="p-2.5 rounded-xl text-primary hover:bg-primary/10 transition-colors" title="เปิดโครงการ">
                 <FolderOpen className="w-5 h-5" />
               </button>
