@@ -69,8 +69,10 @@ export async function loadCostControl(projectId: string): Promise<CostControlDat
   return {
     ...emptyCostControl(projectId),
     ...found,
+    overheadBudget: found.overheadBudget ?? 0,
     progress: found.progress ?? {},
     entries: found.entries ?? [],
+    vos: found.vos ?? [],
   };
 }
 

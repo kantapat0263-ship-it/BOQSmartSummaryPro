@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft, TrendingUp, TrendingDown, Wallet, Target, Activity, Plus, Trash2,
-  Cloud, HardDrive, CheckCircle2, AlertTriangle, Gauge, Layers,
+  Cloud, HardDrive, CheckCircle2, AlertTriangle, Gauge, Layers, FilePlus2, Building2,
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell,
@@ -12,8 +12,9 @@ import {
 import { AnimatedNumber } from '@/components/AnimatedNumber';
 import { saveCostControl } from '@/lib/cost-control-store';
 import {
-  computeCostSummary, COST_TYPES, costTypeLabel,
+  computeCostSummary, COST_TYPES, costTypeLabel, OVERHEAD_CAT,
   type CostControlData, type CostEntry, type CostType, type EntryStatus, type BudgetCat, type RAG,
+  type VariationOrder, type CostSummary,
 } from '@/lib/cost-control';
 
 const fmt0 = (n: number) => Math.round(n).toLocaleString('th-TH', { maximumFractionDigits: 0 });
@@ -61,8 +62,18 @@ export function CostControlView({ projectId, projectName, grand, budgetCats, ini
   const setProgress = (cat: string, val: number) =>
     setData((d) => ({ ...d, progress: { ...d.progress, [cat]: val } }));
   const setProfit = (val: number) => setData((d) => ({ ...d, targetProfitPct: val }));
+  const setOverhead = (val: number) => setData((d) => ({ ...d, overheadBudget: val }));
   const addEntry = (e: CostEntry) => setData((d) => ({ ...d, entries: [e, ...d.entries] }));
   const delEntry = (id: string) => setData((d) => ({ ...d, entries: d.entries.filter((x) => x.id !== id) }));
+  const addVO = (v: VariationOrder) => setData((d) => ({ ...d, vos: [v, ...(d.vos ?? [])] }));
+  const delVO = (id: string) => setData((d) => ({ ...d, vos: (d.vos ?? []).filter((x) => x.id !== id) }));
+  const toggleVO = (id: string) =>
+    setData((d) => ({ ...d, vos: (d.vos ?? []).map((x) => (x.id === id ? { ...x, approved: !x.approved } : x)) }));
+
+  // หมวดทั้งหมดสำหรับ dropdown (BOQ + VO + ค่าโสหุ้ย)
+  const baseCats = budgetCats.map((b) => b.category);
+  const allCats = Array.from(new Set([...baseCats, ...(data.vos ?? []).map((v) => v.category), OVERHEAD_CAT]));
+  const entryCats = Array.from(new Set([...allCats, OVERHEAD_CAT]));
 
   const chartData = summary.categories
     .filter((c) => c.boq > 0 || c.actual > 0)
@@ -89,7 +100,12 @@ export function CostControlView({ projectId, projectName, grand, budgetCats, ini
                 <Gauge className="w-3.5 h-3.5" /> Cost Control
               </div>
               <h1 className="text-3xl md:text-4xl font-black tracking-tight">{projectName}</h1>
-              <p className="text-blue-100/70 font-medium mt-1">มูลค่าสัญญา ฿{fmt0(grand)}</p>
+              <p className="text-blue-100/70 font-medium mt-1">
+                มูลค่าสัญญา ฿{fmt0(summary.contract)}
+                {summary.voApproved !== 0 && (
+                  <span className="text-blue-100/50"> (เดิม ฿{fmt0(summary.originalContract)} {summary.voApproved >= 0 ? '+' : '−'} VO ฿{fmt0(Math.abs(summary.voApproved))})</span>
+                )}
+              </p>
             </div>
             <div className="flex items-center gap-2 text-xs font-bold bg-white/10 rounded-full px-4 py-2 backdrop-blur">
               {mode === 'cloud' ? <Cloud className="w-4 h-4 text-emerald-300" /> : <HardDrive className="w-4 h-4" />}
@@ -178,6 +194,20 @@ export function CostControlView({ projectId, projectName, grand, budgetCats, ini
           <p className="text-xs text-muted-foreground font-medium w-full md:w-auto">
             งบต้นทุน = มูลค่า BOQ × {(100 - data.targetProfitPct).toFixed(1)}%
           </p>
+          <div className="w-full border-t border-border/40 pt-4 flex flex-wrap items-center gap-3">
+            <div className="font-black text-primary flex items-center gap-2"><Building2 className="w-5 h-5" /> งบค่าโสหุ้ยสนาม</div>
+            <input
+              type="number" min={0} step={1000}
+              value={data.overheadBudget || ''}
+              onChange={(e) => setOverhead(Math.max(0, Number(e.target.value)))}
+              placeholder="0"
+              className="w-44 text-right font-black text-lg border border-border rounded-xl px-3 py-1.5"
+            />
+            <span className="font-bold">บาท</span>
+            <p className="text-xs text-muted-foreground font-medium">
+              เงินเดือนวิศวกร/โฟร์แมน, ออฟฟิศสนาม ฯลฯ (ต้นทุนทางอ้อม — บันทึกจ่ายจริงโดยเลือกหมวด “{OVERHEAD_CAT}”)
+            </p>
+          </div>
         </div>
 
         {/* ===== chart: งบ vs จ่าย vs คาดจบ ===== */}
@@ -276,14 +306,126 @@ export function CostControlView({ projectId, projectName, grand, budgetCats, ini
           </div>
         </div>
 
+        {/* ===== งานเพิ่ม-ลด (VO) ===== */}
+        <VariationSection
+          categories={allCats}
+          vos={data.vos ?? []}
+          summary={summary}
+          onAdd={addVO}
+          onDelete={delVO}
+          onToggle={toggleVO}
+        />
+
         {/* ===== บันทึกรายจ่าย ===== */}
         <CostEntrySection
-          categories={budgetCats.map((b) => b.category)}
+          categories={entryCats}
           entries={data.entries}
           onAdd={addEntry}
           onDelete={delEntry}
         />
       </div>
+    </div>
+  );
+}
+
+// ---------- งานเพิ่ม-ลด (VO) ----------
+function VariationSection({
+  categories, vos, summary, onAdd, onDelete, onToggle,
+}: {
+  categories: string[];
+  vos: VariationOrder[];
+  summary: CostSummary;
+  onAdd: (v: VariationOrder) => void;
+  onDelete: (id: string) => void;
+  onToggle: (id: string) => void;
+}) {
+  const [date, setDate] = useState(today());
+  const [title, setTitle] = useState('');
+  const [category, setCategory] = useState(categories[0] ?? '');
+  const [revenue, setRevenue] = useState('');
+  const [approved, setApproved] = useState(true);
+
+  useEffect(() => { if (!category && categories[0]) setCategory(categories[0]); }, [categories, category]);
+
+  const submit = () => {
+    const rev = Number(revenue);
+    const cat = category.trim();
+    if (!title.trim() || !cat || !rev) return;
+    onAdd({ id: newId(), date, title: title.trim(), category: cat, revenue: rev, approved });
+    setTitle(''); setRevenue('');
+  };
+
+  const inputCls = 'border border-border rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary/30 focus:outline-none';
+
+  return (
+    <div className="bg-white rounded-3xl border border-border/60 shadow-sm overflow-hidden">
+      <div className="p-6 pb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-black text-primary flex items-center gap-2"><FilePlus2 className="w-5 h-5" /> งานเพิ่ม-ลด (VO)</h3>
+          <p className="text-xs text-muted-foreground font-medium">งานที่เจ้าของสั่งเพิ่ม/ลด — อนุมัติแล้วจะเพิ่มทั้งรายได้และงบของหมวดนั้น</p>
+        </div>
+        <div className="flex items-center gap-4 text-sm font-bold">
+          <span className="text-emerald-600">อนุมัติ {fmtSign(summary.voApproved)}</span>
+          {summary.voPending !== 0 && <span className="text-amber-600">รออนุมัติ {fmtSign(summary.voPending)}</span>}
+        </div>
+      </div>
+
+      {/* form */}
+      <div className="px-6 pb-5 grid grid-cols-2 md:grid-cols-8 gap-2 items-center">
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} />
+        <input placeholder="ชื่องาน VO" value={title} onChange={(e) => setTitle(e.target.value)} className={`${inputCls} col-span-2 md:col-span-3`} />
+        <input list="vo-cats" placeholder="หมวด" value={category} onChange={(e) => setCategory(e.target.value)} className={`${inputCls} col-span-2`} />
+        <datalist id="vo-cats">{categories.map((c) => <option key={c} value={c} />)}</datalist>
+        <input type="number" placeholder="มูลค่า (±)" value={revenue} onChange={(e) => setRevenue(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submit()} className={`${inputCls} text-right font-bold`} />
+        <label className="flex items-center gap-1.5 text-sm font-bold text-primary cursor-pointer">
+          <input type="checkbox" checked={approved} onChange={(e) => setApproved(e.target.checked)} className="w-4 h-4 accent-secondary" />
+          อนุมัติ
+        </label>
+        <button onClick={submit} disabled={!title.trim() || !category.trim() || !Number(revenue)}
+          className="bg-secondary hover:bg-secondary/90 disabled:opacity-40 text-white rounded-xl px-4 py-2 font-black text-sm inline-flex items-center justify-center gap-1.5 col-span-2 md:col-span-8">
+          <Plus className="w-4 h-4" /> เพิ่ม VO
+        </button>
+      </div>
+
+      {/* list */}
+      {vos.length > 0 && (
+        <div className="overflow-x-auto border-t border-border/60">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[11px] uppercase tracking-wider text-muted-foreground bg-muted/30">
+                <th className="text-left font-black px-4 py-2.5">วันที่</th>
+                <th className="text-left font-black px-3">ชื่องาน</th>
+                <th className="text-left font-black px-3">หมวด</th>
+                <th className="text-right font-black px-3">มูลค่า</th>
+                <th className="text-center font-black px-3">สถานะ</th>
+                <th className="px-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {vos.map((v) => (
+                <tr key={v.id} className="border-t border-border/40 hover:bg-muted/20">
+                  <td className="px-4 py-2.5 text-muted-foreground tabular-nums">{v.date}</td>
+                  <td className="px-3 font-semibold text-primary max-w-[220px] truncate" title={v.title}>{v.title}</td>
+                  <td className="px-3 text-muted-foreground max-w-[180px] truncate" title={v.category}>{v.category}</td>
+                  <td className={`px-3 text-right tabular-nums font-bold ${v.revenue >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmtSign(v.revenue)}</td>
+                  <td className="px-3 text-center">
+                    <button onClick={() => onToggle(v.id)}
+                      className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${v.approved ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {v.approved ? 'อนุมัติแล้ว' : 'รออนุมัติ'}
+                    </button>
+                  </td>
+                  <td className="px-3 text-right">
+                    <button onClick={() => onDelete(v.id)} className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

@@ -31,17 +31,36 @@ export interface CostEntry {
   note?: string;
 }
 
+/** หมวดสำหรับค่าโสหุ้ยสนาม (ต้นทุนทางอ้อม ไม่ผูกหมวดงาน) */
+export const OVERHEAD_CAT = 'ค่าโสหุ้ยสนาม';
+
+/** งานเพิ่ม-ลด (Variation Order): เปลี่ยนทั้งรายได้และงบของหมวด */
+export interface VariationOrder {
+  id: string;
+  date: string; // yyyy-mm-dd
+  title: string;
+  category: string; // เพิ่มเข้าหมวดไหน
+  revenue: number; // มูลค่าที่เพิ่ม (ติดลบได้ = งานลด)
+  approved: boolean; // อนุมัติแล้ว -> นับเข้าสัญญา
+  note?: string;
+}
+
 /** ข้อมูลคุมต้นทุนทั้งหมดของ 1 โครงการ (เก็บเป็นก้อนเดียว) */
 export interface CostControlData {
   projectId: string;
   targetProfitPct: number; // กำไรเป้าหมาย % (เช่น 15)
+  overheadBudget: number; // งบค่าโสหุ้ยสนามที่ตั้งไว้
   progress: Record<string, number>; // หมวด -> % ความคืบหน้า (0..100)
   entries: CostEntry[];
+  vos: VariationOrder[];
   updatedAt: number;
 }
 
 export function emptyCostControl(projectId: string): CostControlData {
-  return { projectId, targetProfitPct: 15, progress: {}, entries: [], updatedAt: Date.now() };
+  return {
+    projectId, targetProfitPct: 15, overheadBudget: 0,
+    progress: {}, entries: [], vos: [], updatedAt: Date.now(),
+  };
 }
 
 export type RAG = 'good' | 'warn' | 'bad' | 'none';
@@ -64,7 +83,11 @@ export interface CategoryCost {
 }
 
 export interface CostSummary {
-  contract: number; // มูลค่าสัญญา = Σ BOQ
+  contract: number; // มูลค่าสัญญาปัจจุบัน = Σ BOQ + VO อนุมัติ
+  originalContract: number; // มูลค่าสัญญาเดิม (จาก BOQ)
+  voApproved: number; // VO ที่อนุมัติแล้ว
+  voPending: number; // VO ที่รออนุมัติ
+  overheadBudget: number;
   totalBudgetCost: number;
   targetProfit: number; // contract − งบต้นทุน
   targetProfitPct: number;
@@ -110,47 +133,68 @@ export function computeCostSummary(budgetCats: BudgetCat[], data: CostControlDat
     m.set(e.category, (m.get(e.category) ?? 0) + (Number(e.amount) || 0));
   }
 
-  // เริ่มจากหมวดใน BOQ + เติมหมวดที่มีรายจ่ายแต่ไม่อยู่ใน BOQ (รายจ่ายนอกงบ)
+  // เริ่มจากหมวดใน BOQ
   const order: string[] = [];
   const boqMap = new Map<string, number>();
+  const originalContract = budgetCats.reduce((s, b) => s + b.boq, 0);
   for (const b of budgetCats) {
     if (!boqMap.has(b.category)) order.push(b.category);
     boqMap.set(b.category, (boqMap.get(b.category) ?? 0) + b.boq);
   }
+  // งานเพิ่ม-ลด (VO): อนุมัติแล้ว -> เพิ่มรายได้+งบเข้าหมวด
+  let voApproved = 0;
+  let voPending = 0;
+  for (const v of data.vos ?? []) {
+    const amt = Number(v.revenue) || 0;
+    if (v.approved) {
+      voApproved += amt;
+      if (!boqMap.has(v.category)) order.push(v.category);
+      boqMap.set(v.category, (boqMap.get(v.category) ?? 0) + amt);
+    } else {
+      voPending += amt;
+    }
+  }
+  // เติมหมวดที่มีรายจ่ายแต่ไม่อยู่ใน BOQ/VO (รายจ่ายนอกงบ) ยกเว้นค่าโสหุ้ย (จัดการแยก)
   for (const c of new Set([...paidBy.keys(), ...commitBy.keys()])) {
-    if (!boqMap.has(c)) {
+    if (c !== OVERHEAD_CAT && !boqMap.has(c)) {
       order.push(c);
       boqMap.set(c, 0);
     }
   }
 
-  const categories: CategoryCost[] = order.map((category) => {
-    const boq = boqMap.get(category) ?? 0;
+  const calcCat = (category: string, boq: number, budgetCost: number, progressPct: number): CategoryCost => {
     const inBudget = boq > 0;
-    const budgetCost = boq * (1 - pct);
-    const progressPct = Math.min(100, Math.max(0, data.progress[category] ?? 0));
     const earned = (budgetCost * progressPct) / 100;
     const paid = paidBy.get(category) ?? 0;
     const committed = commitBy.get(category) ?? 0;
     const actual = paid + committed;
     const cv = earned - actual;
     const cpi = actual > 0 ? earned / actual : null;
-
-    // EAC: ยังไม่เริ่ม -> = งบ; เริ่มแล้ว -> ฉายต่อด้วย CPI; จ่ายแต่ยังไม่ลงคืบหน้า -> อย่างน้อย = จ่ายจริง
     let eac: number;
     if (actual <= 0 && progressPct <= 0) eac = budgetCost;
     else if (progressPct > 0 && cpi && cpi > 0) eac = budgetCost / cpi;
     else eac = Math.max(budgetCost, actual);
-
     const forecastProfit = boq - eac;
     const ratio = budgetCost > 0 ? eac / budgetCost : actual > 0 ? Infinity : 1;
     const status = ragByCostRatio(ratio, actual > 0 || progressPct > 0);
+    return { category, boq, budgetCost, progressPct, earned, paid, committed, actual, cv, cpi, eac, forecastProfit, inBudget, status };
+  };
 
-    return {
-      category, boq, budgetCost, progressPct, earned,
-      paid, committed, actual, cv, cpi, eac, forecastProfit, inBudget, status,
-    };
+  const categories: CategoryCost[] = order.map((category) => {
+    const boq = boqMap.get(category) ?? 0;
+    const progressPct = Math.min(100, Math.max(0, data.progress[category] ?? 0));
+    return calcCat(category, boq, boq * (1 - pct), progressPct);
   });
+
+  // ค่าโสหุ้ยสนาม: งบ = overheadBudget, ไม่มีรายได้, ใช้ %คืบหน้ารวมของงานเป็นตัวฉาย EAC
+  const overheadBudget = Math.max(0, Number(data.overheadBudget) || 0);
+  const overheadActual = (paidBy.get(OVERHEAD_CAT) ?? 0) + (commitBy.get(OVERHEAD_CAT) ?? 0);
+  if (overheadBudget > 0 || overheadActual > 0) {
+    const workBudget = categories.reduce((s, c) => s + c.budgetCost, 0);
+    const workEarned = categories.reduce((s, c) => s + c.earned, 0);
+    const ohProgress = workBudget > 0 ? Math.min(100, (workEarned / workBudget) * 100) : 0;
+    categories.push(calcCat(OVERHEAD_CAT, 0, overheadBudget, ohProgress));
+  }
 
   const contract = categories.reduce((s, c) => s + c.boq, 0);
   const totalBudgetCost = categories.reduce((s, c) => s + c.budgetCost, 0);
@@ -174,7 +218,8 @@ export function computeCostSummary(budgetCats: BudgetCat[], data: CostControlDat
   }
 
   return {
-    contract, totalBudgetCost, targetProfit, targetProfitPct: data.targetProfitPct,
+    contract, originalContract, voApproved, voPending, overheadBudget,
+    totalBudgetCost, targetProfit, targetProfitPct: data.targetProfitPct,
     paid, committed, totalActual, totalEarned, totalEAC,
     forecastProfit, forecastProfitPct, profitVariance, overallProgressPct, cpi, status,
     categories,
