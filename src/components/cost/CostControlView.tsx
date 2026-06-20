@@ -5,18 +5,20 @@ import Link from 'next/link';
 import {
   ArrowLeft, TrendingUp, TrendingDown, Wallet, Target, Activity, Plus, Trash2,
   Cloud, HardDrive, CheckCircle2, AlertTriangle, Gauge, Layers, FilePlus2, Building2,
-  Banknote, ShieldCheck, ArrowDownLeft, ArrowUpRight,
+  Banknote, ShieldCheck, ArrowDownLeft, ArrowUpRight, LineChart as LineChartIcon, Download,
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell,
-  ComposedChart, Line,
+  ComposedChart, Line, LineChart,
 } from 'recharts';
 import { AnimatedNumber } from '@/components/AnimatedNumber';
+import { useToast } from '@/hooks/use-toast';
 import { saveCostControl } from '@/lib/cost-control-store';
 import {
-  computeCostSummary, computeCashflow, COST_TYPES, costTypeLabel, OVERHEAD_CAT,
+  computeCostSummary, computeCashflow, computeSCurve, COST_TYPES, costTypeLabel, OVERHEAD_CAT,
   type CostControlData, type CostEntry, type CostType, type EntryStatus, type BudgetCat, type RAG,
   type VariationOrder, type CostSummary, type PaymentMilestone, type CashflowSummary,
+  type ProgressSnapshot, type SCurvePoint,
 } from '@/lib/cost-control';
 
 const fmt0 = (n: number) => Math.round(n).toLocaleString('th-TH', { maximumFractionDigits: 0 });
@@ -59,8 +61,28 @@ export function CostControlView({ projectId, projectName, grand, budgetCats, ini
     return () => clearTimeout(t);
   }, [data]);
 
+  const { toast } = useToast();
   const summary = useMemo(() => computeCostSummary(budgetCats, data), [budgetCats, data]);
   const cash = useMemo(() => computeCashflow(data), [data]);
+  const scurve = useMemo(() => computeSCurve(data, summary.totalBudgetCost), [data, summary.totalBudgetCost]);
+
+  const downloadReport = async () => {
+    try {
+      const { generateCostReport } = await import('@/lib/cost-report'); // โหลด ExcelJS เฉพาะตอนกด
+      const buf = await generateCostReport({ projectName, summary, cash, data });
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `[คุมต้นทุน] ${projectName}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast({ variant: 'destructive', title: 'สร้างรายงานไม่สำเร็จ', description: String((err as Error)?.message ?? err) });
+    }
+  };
 
   const setProgress = (cat: string, val: number) =>
     setData((d) => ({ ...d, progress: { ...d.progress, [cat]: val } }));
@@ -77,6 +99,13 @@ export function CostControlView({ projectId, projectName, grand, budgetCats, ini
   const delPayment = (id: string) => setData((d) => ({ ...d, payments: (d.payments ?? []).filter((x) => x.id !== id) }));
   const togglePayment = (id: string) =>
     setData((d) => ({ ...d, payments: (d.payments ?? []).map((x) => (x.id === id ? { ...x, received: !x.received } : x)) }));
+  const setSnapshot = (month: string, pct: number) =>
+    setData((d) => {
+      const rest = (d.progressHistory ?? []).filter((h) => h.month !== month);
+      return { ...d, progressHistory: [...rest, { month, pct }].sort((a, b) => a.month.localeCompare(b.month)) };
+    });
+  const delSnapshot = (month: string) =>
+    setData((d) => ({ ...d, progressHistory: (d.progressHistory ?? []).filter((h) => h.month !== month) }));
 
   // หมวดทั้งหมดสำหรับ dropdown (BOQ + VO + ค่าโสหุ้ย)
   const baseCats = budgetCats.map((b) => b.category);
@@ -99,9 +128,15 @@ export function CostControlView({ projectId, projectName, grand, budgetCats, ini
       {/* top bar */}
       <div className="hero-gradient text-white">
         <div className="max-w-7xl mx-auto px-6 py-10">
-          <Link href="/" className="inline-flex items-center gap-2 text-blue-100/80 hover:text-white text-sm font-bold mb-6">
-            <ArrowLeft className="w-4 h-4" /> กลับหน้าหลัก
-          </Link>
+          <div className="flex items-center justify-between mb-6">
+            <Link href="/" className="inline-flex items-center gap-2 text-blue-100/80 hover:text-white text-sm font-bold">
+              <ArrowLeft className="w-4 h-4" /> กลับหน้าหลัก
+            </Link>
+            <button onClick={downloadReport}
+              className="inline-flex items-center gap-2 bg-white/15 hover:bg-white/25 text-white text-sm font-black rounded-xl px-4 py-2 backdrop-blur transition-colors">
+              <Download className="w-4 h-4" /> ดาวน์โหลดรายงาน CVR
+            </button>
+          </div>
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <div className="inline-flex items-center gap-2 bg-secondary px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-widest mb-3">
@@ -357,6 +392,97 @@ export function CostControlView({ projectId, projectName, grand, budgetCats, ini
           onDelete={delPayment}
           onToggle={togglePayment}
         />
+
+        {/* ===== S-curve ===== */}
+        <SCurveSection
+          points={scurve}
+          history={data.progressHistory ?? []}
+          onSet={setSnapshot}
+          onDelete={delSnapshot}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ---------- S-curve (เนื้องาน vs ต้นทุน) ----------
+function SCurveSection({
+  points, history, onSet, onDelete,
+}: {
+  points: SCurvePoint[];
+  history: ProgressSnapshot[];
+  onSet: (month: string, pct: number) => void;
+  onDelete: (month: string) => void;
+}) {
+  const [month, setMonth] = useState(today().slice(0, 7));
+  const [pct, setPct] = useState('');
+
+  const submit = () => {
+    const p = Number(pct);
+    if (!month || isNaN(p)) return;
+    onSet(month, Math.min(100, Math.max(0, p)));
+    setPct('');
+  };
+
+  const inputCls = 'border border-border rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary/30 focus:outline-none';
+  const chartData = points.map((p) => ({
+    name: p.month.slice(2).replace('-', '/'),
+    เนื้องาน: Math.round(p.earnedCum),
+    ต้นทุนจ่าย: Math.round(p.costCum),
+  }));
+
+  return (
+    <div className="bg-white rounded-3xl border border-border/60 shadow-sm overflow-hidden">
+      <div className="p-6 pb-4">
+        <h3 className="font-black text-primary flex items-center gap-2"><LineChartIcon className="w-5 h-5" /> S-curve: เนื้องาน vs ต้นทุนจ่ายจริง</h3>
+        <p className="text-xs text-muted-foreground font-medium">
+          บันทึก % ความคืบหน้ารวม ณ สิ้นเดือน → เทียบ “เนื้องานสะสม” กับ “เงินที่จ่ายไปสะสม” (เส้นต้นทุนเหนือเนื้องาน = ใช้เงินเกินเนื้องาน)
+        </p>
+      </div>
+
+      {chartData.length > 0 ? (
+        <div className="px-4 md:px-6">
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={chartData} margin={{ left: 4, right: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" fontSize={11} />
+              <YAxis tickFormatter={(v) => `${(v / 1e6).toFixed(1)}M`} fontSize={11} />
+              <Tooltip formatter={(v: number) => `฿${fmt0(v)}`} />
+              <Legend />
+              <Line type="monotone" dataKey="เนื้องาน" stroke="#10b981" strokeWidth={3} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="ต้นทุนจ่าย" stroke="#f97316" strokeWidth={3} dot={{ r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <p className="text-center text-muted-foreground text-sm py-6">บันทึก % ความคืบหน้ารายเดือนด้านล่าง เพื่อสร้างกราฟ</p>
+      )}
+
+      {/* form */}
+      <div className="px-6 py-5 flex flex-wrap items-center gap-2">
+        <span className="text-sm font-bold text-primary">บันทึกความคืบหน้ารวม:</span>
+        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={inputCls} />
+        <div className="flex items-center gap-1">
+          <input type="number" min={0} max={100} placeholder="%" value={pct} onChange={(e) => setPct(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submit()} className={`${inputCls} w-24 text-right font-bold`} />
+          <span className="font-bold">%</span>
+        </div>
+        <button onClick={submit} disabled={!month || pct === ''}
+          className="bg-secondary hover:bg-secondary/90 disabled:opacity-40 text-white rounded-xl px-4 py-2 font-black text-sm inline-flex items-center gap-1.5">
+          <Plus className="w-4 h-4" /> บันทึก
+        </button>
+        {history.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 ml-2">
+            {history.map((h) => (
+              <span key={h.month} className="inline-flex items-center gap-1 text-xs font-bold bg-muted rounded-full pl-2.5 pr-1 py-1">
+                {h.month.slice(2).replace('-', '/')}: {h.pct}%
+                <button onClick={() => onDelete(h.month)} className="p-0.5 rounded-full hover:bg-destructive/10 hover:text-destructive">
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

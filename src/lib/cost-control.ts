@@ -54,6 +54,12 @@ export interface PaymentMilestone {
   received: boolean; // รับเงินแล้วหรือยัง
 }
 
+/** ความคืบหน้ารวมของโครงการ ณ สิ้นเดือน (สำหรับ S-curve) */
+export interface ProgressSnapshot {
+  month: string; // YYYY-MM
+  pct: number; // % ความคืบหน้ารวม (0..100)
+}
+
 /** ข้อมูลคุมต้นทุนทั้งหมดของ 1 โครงการ (เก็บเป็นก้อนเดียว) */
 export interface CostControlData {
   projectId: string;
@@ -64,13 +70,14 @@ export interface CostControlData {
   entries: CostEntry[];
   vos: VariationOrder[];
   payments: PaymentMilestone[];
+  progressHistory: ProgressSnapshot[];
   updatedAt: number;
 }
 
 export function emptyCostControl(projectId: string): CostControlData {
   return {
     projectId, targetProfitPct: 15, overheadBudget: 0, retentionPct: 0,
-    progress: {}, entries: [], vos: [], payments: [], updatedAt: Date.now(),
+    progress: {}, entries: [], vos: [], payments: [], progressHistory: [], updatedAt: Date.now(),
   };
 }
 
@@ -308,4 +315,42 @@ export function computeCashflow(data: CostControlData): CashflowSummary {
     paidOut, committedOut, netCash: receivedNet - paidOut,
     months, minCumulative,
   };
+}
+
+// ---------- S-curve (เนื้องานสะสม vs ต้นทุนจ่ายสะสม) ----------
+export interface SCurvePoint {
+  month: string; // YYYY-MM
+  earnedCum: number; // มูลค่าเนื้องานสะสม (EV)
+  costCum: number; // ต้นทุนจ่ายจริงสะสม (AC)
+}
+
+export function computeSCurve(data: CostControlData, totalBudgetCost: number): SCurvePoint[] {
+  // ต้นทุนจ่ายสะสมรายเดือน (เฉพาะสถานะจ่ายแล้ว)
+  const costByMonth = new Map<string, number>();
+  for (const e of data.entries ?? []) {
+    if (e.status === 'committed') continue;
+    const m = monthOf(e.date);
+    costByMonth.set(m, (costByMonth.get(m) ?? 0) + (Number(e.amount) || 0));
+  }
+  // ความคืบหน้ารวม ณ สิ้นเดือน (เรียงตามเดือน)
+  const hist = [...(data.progressHistory ?? [])]
+    .filter((h) => h.month)
+    .sort((a, b) => a.month.localeCompare(b.month));
+
+  const months = Array.from(new Set([
+    ...costByMonth.keys(),
+    ...hist.map((h) => h.month),
+  ])).filter((m) => m && m !== 'ไม่ระบุ').sort();
+
+  let costCum = 0;
+  let lastPct = 0;
+  let hi = 0;
+  return months.map((month) => {
+    costCum += costByMonth.get(month) ?? 0;
+    while (hi < hist.length && hist[hi].month <= month) {
+      lastPct = Math.min(100, Math.max(0, hist[hi].pct || 0));
+      hi += 1;
+    }
+    return { month, earnedCum: (lastPct / 100) * totalBudgetCost, costCum };
+  });
 }

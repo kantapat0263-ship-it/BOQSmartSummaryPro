@@ -75,6 +75,7 @@ export async function loadCostControl(projectId: string): Promise<CostControlDat
     entries: found.entries ?? [],
     vos: found.vos ?? [],
     payments: found.payments ?? [],
+    progressHistory: found.progressHistory ?? [],
   };
 }
 
